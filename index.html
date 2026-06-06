@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Rugby Dropbox CSV Player Report v3</title>
+  <title>Rugby Dropbox CSV Player Report v4</title>
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
   <style>
     :root {
@@ -51,7 +51,7 @@
     h2 { margin: 0 0 12px; font-size: 18px; }
     h3 { margin: 20px 0 8px; font-size: 15px; }
     label { display: block; font-weight: 650; margin: 10px 0 6px; }
-    input[type="file"], input[type="text"], input[type="password"], textarea, select {
+    input[type="file"], input[type="text"], input[type="password"], input[type="date"], textarea, select {
       width: 100%;
       border: 1px solid #cfd5df;
       border-radius: 10px;
@@ -62,6 +62,9 @@
     }
     textarea { min-height: 86px; resize: vertical; }
     .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .filter-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; align-items: end; }
+    @media (max-width: 1100px) { .filter-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+    @media (max-width: 700px) { .filter-grid { grid-template-columns: 1fr; } }
     .row > * { flex: 1; }
     .row .fit { flex: 0 0 auto; }
     button {
@@ -163,7 +166,7 @@
 </head>
 <body>
   <header>
-    <h1>Rugby Dropbox CSV Player Report v3</h1>
+    <h1>Rugby Dropbox CSV Player Report v4</h1>
     <p>Dropboxフォルダ内のCSVを高速取得し、選手別のCarry数・Tackle成功率を集計します。</p>
   </header>
 
@@ -226,7 +229,7 @@
           </ol>
           <input id="redirectUri" type="text" readonly>
           <p class="hint"><code>file://</code> で直接開くとOAuthリダイレクトに使えない場合があります。GitHub PagesなどのHTTPS、またはローカルHTTPサーバーで開いてください。</p>
-          <p class="hint">v3: 1300件以上のCSVに対応するため、並列ダウンロード・ファイルrev別の差分キャッシュ・ZIP一括読み込みを追加しました。</p>
+          <p class="hint">v4: 1300件以上のCSV向けの差分キャッシュに加え、Season / Competition / Fixture / Date範囲 / Team Nameフィルターを追加しました。</p>
         </details>
 
         <div id="dropboxStatus" class="status"></div>
@@ -265,13 +268,50 @@
       </div>
 
       <div class="card span-12">
+        <h2>フィルター</h2>
+        <div class="filter-grid">
+          <div>
+            <label>Season</label>
+            <select id="seasonFilter"><option value="">全Season</option></select>
+          </div>
+          <div>
+            <label>Competition</label>
+            <select id="competitionFilter"><option value="">全Competition</option></select>
+          </div>
+          <div>
+            <label>Season Competition</label>
+            <select id="seasonCompetitionFilter"><option value="">全Season Competition</option></select>
+          </div>
+          <div>
+            <label>Team Name</label>
+            <select id="teamFilter"><option value="">全チーム</option></select>
+          </div>
+          <div>
+            <label>Fixture</label>
+            <select id="fixtureFilter"><option value="">全Fixture</option></select>
+          </div>
+          <div>
+            <label>Date From</label>
+            <input id="dateFrom" type="date">
+          </div>
+          <div>
+            <label>Date To</label>
+            <input id="dateTo" type="date">
+          </div>
+          <div>
+            <button id="resetFilters" class="ghost fit" type="button">フィルター解除</button>
+          </div>
+        </div>
+        <p class="hint">フィルター変更後は、Dropboxから再ダウンロードせず、読み込み済みの差分キャッシュ・集計データから再集計します。</p>
+      </div>
+
+      <div class="card span-12">
         <div class="row">
           <div>
             <h2>選手別レポート</h2>
             <p class="hint" style="margin-top:-4px">ヘッダーをクリックすると並び替えできます。</p>
           </div>
-          <input id="filterText" type="text" placeholder="選手名・チーム名で絞り込み">
-          <select id="teamFilter"><option value="">全チーム</option></select>
+          <input id="filterText" type="text" placeholder="選手名・チーム名で検索">
           <button id="downloadSummary" class="secondary fit" disabled>集計CSVを書き出し</button>
         </div>
         <div class="table-wrap" id="tableWrap">
@@ -538,7 +578,7 @@
       .sort((a, b) => clean(a.path_display || a.path_lower).localeCompare(clean(b.path_display || b.path_lower), "ja"));
   }
 
-  const CACHE_DB_NAME = "rugbyOptaDropboxReportCacheV3";
+  const CACHE_DB_NAME = "rugbyOptaDropboxReportCacheV4";
   const CACHE_STORE = "fileSummaries";
   let cacheDbPromise = null;
 
@@ -873,7 +913,78 @@
       });
   }
 
-  function summarizeRows(inputRows, sourceName) {
+  function parseDateToISO(value) {
+    const s = clean(value);
+    if (!s) return "";
+    let m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (m) {
+      const d = m[1].padStart(2, "0"), mo = m[2].padStart(2, "0"), y = m[3];
+      return `${y}-${mo}-${d}`;
+    }
+    m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+    if (m) return `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}`;
+    const t = Date.parse(s);
+    if (!Number.isNaN(t)) return new Date(t).toISOString().slice(0, 10);
+    return "";
+  }
+
+  function seasonCompetitionLabel(season, competition) {
+    const s = clean(season);
+    const c = clean(competition);
+    if (s && c) return `${s} / ${c}`;
+    return s || c || "";
+  }
+
+  function rowMeta(r, sourceName) {
+    const fxid = clean(r.FXID || r.match_id || r.MatchID);
+    const dateDisplay = clean(r.datePlayed || r.Date || r.date || r.matchDate);
+    const dateISO = parseDateToISO(dateDisplay);
+    const home = clean(r.homeTeamName || r.homeTeam || r.HomeTeam);
+    const away = clean(r.awayTeamName || r.awayTeam || r.AwayTeam);
+    const season = clean(r.season || r.Season);
+    const competition = clean(r.competitionName || r.CompetitionName || r.competition || r.Competition);
+    const matchId = fxid || clean(sourceName) || "unknown";
+    const fixture = `${matchId} ${dateDisplay} ${home} vs ${away}`.replace(/\s+/g, " ").trim();
+    return {
+      matchId,
+      fixture,
+      dateDisplay,
+      dateISO,
+      season,
+      competition,
+      seasonCompetition: seasonCompetitionLabel(season, competition),
+      home,
+      away
+    };
+  }
+
+  function blankPlayer(r) {
+    return {
+      playerId: clean(r.PLID),
+      playerName: clean(r.playerName) || "不明",
+      teamName: clean(r.teamName) || "不明",
+      shirt: clean(r.playerShirtNumber),
+      position: clean(r.playerpositionName),
+      matches: new Set(),
+      carries: 0,
+      carryMetres: 0,
+      carryGainline: 0,
+      carryDominantContact: 0,
+      carryIneffectiveContact: 0,
+      carryTries: 0,
+      carryErrors: 0,
+      tackleAttempts: 0,
+      tackleSuccess: 0,
+      tackleMissed: 0,
+      tackleDominant: 0,
+      tacklePassive: 0,
+      tackleOffloadAllowed: 0,
+      tacklePenConceded: 0,
+      tackleIneffective: 0
+    };
+  }
+
+  function aggregateRows(inputRows, sourceName) {
     let rows = inputRows.slice();
     if (el("dedupeRows").checked) {
       const seen = new Set();
@@ -891,6 +1002,12 @@
     const players = new Map();
     const matches = new Map();
     const teams = new Set();
+    const seasons = new Set();
+    const competitions = new Set();
+    const seasonCompetitions = new Set();
+    const fixtures = new Set();
+    const dateValues = new Set();
+    const teamRowCounts = {};
 
     function playerKey(r) {
       const id = clean(r.PLID || r.player_id || "");
@@ -901,45 +1018,28 @@
 
     function ensurePlayer(r) {
       const key = playerKey(r);
-      if (!players.has(key)) {
-        players.set(key, {
-          playerId: clean(r.PLID),
-          playerName: clean(r.playerName) || "不明",
-          teamName: clean(r.teamName) || "不明",
-          shirt: clean(r.playerShirtNumber),
-          position: clean(r.playerpositionName),
-          matches: new Set(),
-          carries: 0,
-          carryMetres: 0,
-          carryGainline: 0,
-          carryDominantContact: 0,
-          carryIneffectiveContact: 0,
-          carryTries: 0,
-          carryErrors: 0,
-          tackleAttempts: 0,
-          tackleSuccess: 0,
-          tackleMissed: 0,
-          tackleDominant: 0,
-          tacklePassive: 0,
-          tackleOffloadAllowed: 0,
-          tacklePenConceded: 0,
-          tackleIneffective: 0
-        });
-      }
+      if (!players.has(key)) players.set(key, blankPlayer(r));
       return players.get(key);
     }
 
     rows.forEach(r => {
-      const fxid = clean(r.FXID || r.match_id || r.MatchID);
-      const matchId = fxid || clean(sourceName) || "unknown";
-      const matchLabel = `${matchId} ${clean(r.datePlayed)} ${clean(r.homeTeamName)} vs ${clean(r.awayTeamName)}`.trim();
-      if (matchId) matches.set(matchId, matchLabel);
+      const meta = rowMeta(r, sourceName);
+      if (meta.matchId) matches.set(meta.matchId, meta.fixture || meta.matchId);
+      if (meta.season) seasons.add(meta.season);
+      if (meta.competition) competitions.add(meta.competition);
+      if (meta.seasonCompetition) seasonCompetitions.add(meta.seasonCompetition);
+      if (meta.fixture) fixtures.add(meta.fixture);
+      if (meta.dateISO) dateValues.add(meta.dateISO);
+
       const team = clean(r.teamName);
-      if (team) teams.add(team);
+      if (team) {
+        teams.add(team);
+        teamRowCounts[team] = (teamRowCounts[team] || 0) + 1;
+      }
 
       if (!clean(r.playerName)) return;
       const p = ensurePlayer(r);
-      if (matchId) p.matches.add(matchId);
+      if (meta.matchId) p.matches.add(meta.matchId);
 
       const action = clean(r.actionName);
       const result = clean(r.ActionResultName);
@@ -973,16 +1073,147 @@
       }
     });
 
+    const sortedDates = [...dateValues].sort();
     return {
       sourceName,
       rowCount: rows.length,
       teams: [...teams],
+      seasons: [...seasons],
+      competitions: [...competitions],
+      seasonCompetitions: [...seasonCompetitions],
+      fixtures: [...fixtures],
+      dateMin: sortedDates[0] || "",
+      dateMax: sortedDates[sortedDates.length - 1] || "",
+      dateISO: sortedDates.length === 1 ? sortedDates[0] : "",
+      teamRowCounts,
       matches: [...matches.entries()].map(([id, label]) => ({ id, label })),
       players: [...players.values()].map(p => ({ ...p, matches: [...p.matches] }))
     };
   }
 
+  function summarizeRows(inputRows, sourceName) {
+    const summary = aggregateRows(inputRows, sourceName);
+    const groups = new Map();
+    inputRows.forEach(r => {
+      const meta = rowMeta(r, sourceName);
+      const key = meta.matchId || meta.fixture || sourceName || "unknown";
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(r);
+    });
+    summary.matchSummaries = [...groups.entries()].map(([key, rows]) => {
+      const s = aggregateRows(rows, sourceName);
+      s.parentSourceName = sourceName;
+      s.matchKey = key;
+      return s;
+    });
+    return summary;
+  }
+
+  function getMatchUnits(summaries) {
+    const units = [];
+    (summaries || []).forEach(summary => {
+      if (Array.isArray(summary.matchSummaries) && summary.matchSummaries.length) units.push(...summary.matchSummaries);
+      else units.push(summary);
+    });
+    return units;
+  }
+
+  function optionLabel(v) { return clean(v); }
+
+  function renderSelectOptions(id, values, allLabel) {
+    const select = el(id);
+    const current = select.value;
+    const unique = [...new Set(values.map(optionLabel).filter(Boolean))].sort((a, b) => a.localeCompare(b, "ja", { numeric: true }));
+    select.innerHTML = `<option value="">${esc(allLabel)}</option>` + unique.map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join("");
+    if (unique.includes(current)) select.value = current;
+  }
+
+  function renderTeamFilter(teams) {
+    renderSelectOptions("teamFilter", teams, "全チーム");
+  }
+
+  function renderFilterOptionsFromSummaries(summaries) {
+    const units = getMatchUnits(summaries);
+    renderSelectOptions("seasonFilter", units.flatMap(u => u.seasons || []), "全Season");
+    renderSelectOptions("competitionFilter", units.flatMap(u => u.competitions || []), "全Competition");
+    renderSelectOptions("seasonCompetitionFilter", units.flatMap(u => u.seasonCompetitions || []), "全Season Competition");
+    renderSelectOptions("fixtureFilter", units.flatMap(u => (u.matches || []).map(m => m.label).concat(u.fixtures || [])), "全Fixture");
+    renderTeamFilter(units.flatMap(u => u.teams || []));
+  }
+
+  function renderFilterOptionsFromRows(rows) {
+    const seasons = [], competitions = [], seasonCompetitions = [], fixtures = [], teams = [];
+    rows.forEach(r => {
+      const meta = rowMeta(r, r.__source || "");
+      if (meta.season) seasons.push(meta.season);
+      if (meta.competition) competitions.push(meta.competition);
+      if (meta.seasonCompetition) seasonCompetitions.push(meta.seasonCompetition);
+      if (meta.fixture) fixtures.push(meta.fixture);
+      const team = clean(r.teamName);
+      if (team) teams.push(team);
+    });
+    renderSelectOptions("seasonFilter", seasons, "全Season");
+    renderSelectOptions("competitionFilter", competitions, "全Competition");
+    renderSelectOptions("seasonCompetitionFilter", seasonCompetitions, "全Season Competition");
+    renderSelectOptions("fixtureFilter", fixtures, "全Fixture");
+    renderTeamFilter(teams);
+  }
+
+  function getMetaFilters() {
+    return {
+      season: el("seasonFilter").value,
+      competition: el("competitionFilter").value,
+      seasonCompetition: el("seasonCompetitionFilter").value,
+      fixture: el("fixtureFilter").value,
+      team: el("teamFilter").value,
+      dateFrom: el("dateFrom").value,
+      dateTo: el("dateTo").value
+    };
+  }
+
+  function unitHasValue(unit, prop, selected) {
+    if (!selected) return true;
+    const arr = unit[prop] || [];
+    return arr.includes(selected);
+  }
+
+  function unitMatchesFilters(unit) {
+    const f = getMetaFilters();
+    if (!unitHasValue(unit, "seasons", f.season)) return false;
+    if (!unitHasValue(unit, "competitions", f.competition)) return false;
+    if (!unitHasValue(unit, "seasonCompetitions", f.seasonCompetition)) return false;
+    if (f.fixture) {
+      const fixtures = (unit.fixtures || []).concat((unit.matches || []).map(m => m.label));
+      if (!fixtures.includes(f.fixture)) return false;
+    }
+    if (f.dateFrom || f.dateTo) {
+      const minDate = unit.dateMin || unit.dateISO || "";
+      const maxDate = unit.dateMax || unit.dateISO || "";
+      if (!minDate && !maxDate) return false;
+      if (f.dateFrom && maxDate && maxDate < f.dateFrom) return false;
+      if (f.dateTo && minDate && minDate > f.dateTo) return false;
+    }
+    return true;
+  }
+
+  function rowMatchesFilters(r) {
+    const f = getMetaFilters();
+    const meta = rowMeta(r, r.__source || "");
+    if (f.season && meta.season !== f.season) return false;
+    if (f.competition && meta.competition !== f.competition) return false;
+    if (f.seasonCompetition && meta.seasonCompetition !== f.seasonCompetition) return false;
+    if (f.fixture && meta.fixture !== f.fixture) return false;
+    if (f.team && clean(r.teamName) !== f.team) return false;
+    if ((f.dateFrom || f.dateTo) && !meta.dateISO) return false;
+    if (f.dateFrom && meta.dateISO < f.dateFrom) return false;
+    if (f.dateTo && meta.dateISO > f.dateTo) return false;
+    return true;
+  }
+
   function buildReportFromFileSummaries(summaries) {
+    renderFilterOptionsFromSummaries(summaries);
+    const selectedTeam = el("teamFilter").value;
+    const units = getMatchUnits(summaries).filter(unitMatchesFilters);
     const players = new Map();
     const matches = new Map();
     const teams = new Set();
@@ -1010,11 +1241,13 @@
       return players.get(key);
     }
 
-    summaries.forEach(summary => {
-      rowCount += summary.rowCount || 0;
-      (summary.teams || []).forEach(t => teams.add(t));
+    units.forEach(summary => {
+      if (selectedTeam && !(summary.teams || []).includes(selectedTeam)) return;
+      rowCount += selectedTeam ? num((summary.teamRowCounts || {})[selectedTeam]) : (summary.rowCount || 0);
+      (summary.teams || []).forEach(t => { if (!selectedTeam || t === selectedTeam) teams.add(t); });
       (summary.matches || []).forEach(m => matches.set(m.id, m.label));
       (summary.players || []).forEach(fp => {
+        if (selectedTeam && clean(fp.teamName) !== selectedTeam) return;
         const p = ensureCombined(fp);
         if (!p.shirt && fp.shirt) p.shirt = fp.shirt;
         if (!p.position && fp.position) p.position = fp.position;
@@ -1033,7 +1266,6 @@
     }));
 
     renderSummary(rowCount, matches, teams);
-    renderTeamFilter([...teams].sort());
     renderTable();
     el("downloadSummary").disabled = state.reportRows.length === 0;
   }
@@ -1057,7 +1289,8 @@
   }
 
   function buildReport() {
-    let rows = state.rawRows.slice();
+    renderFilterOptionsFromRows(state.rawRows);
+    let rows = state.rawRows.filter(rowMatchesFilters);
     if (el("dedupeRows").checked) {
       const seen = new Set();
       rows = rows.filter(r => {
@@ -1083,44 +1316,19 @@
     }
     function ensurePlayer(r) {
       const key = playerKey(r);
-      if (!players.has(key)) {
-        players.set(key, {
-          playerId: clean(r.PLID),
-          playerName: clean(r.playerName) || "不明",
-          teamName: clean(r.teamName) || "不明",
-          shirt: clean(r.playerShirtNumber),
-          position: clean(r.playerpositionName),
-          matches: new Set(),
-          carries: 0,
-          carryMetres: 0,
-          carryGainline: 0,
-          carryDominantContact: 0,
-          carryIneffectiveContact: 0,
-          carryTries: 0,
-          carryErrors: 0,
-          tackleAttempts: 0,
-          tackleSuccess: 0,
-          tackleMissed: 0,
-          tackleDominant: 0,
-          tacklePassive: 0,
-          tackleOffloadAllowed: 0,
-          tacklePenConceded: 0,
-          tackleIneffective: 0
-        });
-      }
+      if (!players.has(key)) players.set(key, blankPlayer(r));
       return players.get(key);
     }
 
     rows.forEach(r => {
-      const fxid = clean(r.FXID || r.match_id || r.MatchID);
-      const matchLabel = `${fxid || clean(r.__source) || "unknown"} ${clean(r.datePlayed)} ${clean(r.homeTeamName)} vs ${clean(r.awayTeamName)}`.trim();
-      if (fxid || clean(r.__source)) matches.set(fxid || clean(r.__source), matchLabel);
+      const meta = rowMeta(r, r.__source || "");
+      if (meta.matchId || clean(r.__source)) matches.set(meta.matchId || clean(r.__source), meta.fixture);
       const team = clean(r.teamName);
       if (team) teams.add(team);
 
       if (!clean(r.playerName)) return;
       const p = ensurePlayer(r);
-      if (fxid || clean(r.__source)) p.matches.add(fxid || clean(r.__source));
+      if (meta.matchId || clean(r.__source)) p.matches.add(meta.matchId || clean(r.__source));
 
       const action = clean(r.actionName);
       const result = clean(r.ActionResultName);
@@ -1164,7 +1372,6 @@
     }));
 
     renderSummary(rows, matches, teams);
-    renderTeamFilter([...teams].sort());
     renderTable();
     el("downloadSummary").disabled = state.reportRows.length === 0;
   }
@@ -1192,12 +1399,6 @@
 
     const matchHtml = [...matches.values()].slice(0, 12).map(m => `<span class="pill">${esc(m)}</span>`).join("");
     el("matchList").innerHTML = matchHtml || `<span class="hint">試合情報がまだありません。</span>`;
-  }
-
-  function renderTeamFilter(teams) {
-    const current = el("teamFilter").value;
-    el("teamFilter").innerHTML = `<option value="">全チーム</option>` + teams.map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join("");
-    if (teams.includes(current)) el("teamFilter").value = current;
   }
 
   const columns = [
@@ -1277,6 +1478,7 @@
     state.rawRows = [];
     state.sourceNames = [];
     state.loadedCsvPaths = [];
+    state.fileSummaries = [];
     for (const file of files) {
       const text = await file.text();
       const rows = parseCSV(text);
@@ -1310,12 +1512,33 @@
     URL.revokeObjectURL(a.href);
   }
 
+  function clearFilterOptions() {
+    renderSelectOptions("seasonFilter", [], "全Season");
+    renderSelectOptions("competitionFilter", [], "全Competition");
+    renderSelectOptions("seasonCompetitionFilter", [], "全Season Competition");
+    renderSelectOptions("fixtureFilter", [], "全Fixture");
+    renderTeamFilter([]);
+  }
+
+  function resetFilters() {
+    ["seasonFilter", "competitionFilter", "seasonCompetitionFilter", "teamFilter", "fixtureFilter"].forEach(id => { el(id).value = ""; });
+    el("dateFrom").value = "";
+    el("dateTo").value = "";
+    rebuildReportWithCurrentData();
+  }
+
+  function rebuildReportWithCurrentData() {
+    if (state.rawRows.length) buildReport();
+    else if (state.fileSummaries.length) buildReportFromFileSummaries(state.fileSummaries);
+    else renderTable();
+  }
+
   function clearReportOnly() {
     state.reportRows = [];
     el("summary").innerHTML = "";
     el("matchList").innerHTML = "";
     el("fileList").innerHTML = "";
-    el("teamFilter").innerHTML = `<option value="">全チーム</option>`;
+    clearFilterOptions();
     el("tableWrap").innerHTML = `<div class="empty">DropboxフォルダまたはローカルCSVを読み込むと、ここに選手別集計が表示されます。</div>`;
     el("downloadSummary").disabled = true;
   }
@@ -1348,7 +1571,10 @@
     el("loadLocal").addEventListener("click", () => readFiles(el("csvFiles").files).catch(e => status(`エラー: ${e.message}`)));
     el("clearData").addEventListener("click", clearData);
     el("filterText").addEventListener("input", renderTable);
-    el("teamFilter").addEventListener("change", renderTable);
+    ["seasonFilter", "competitionFilter", "seasonCompetitionFilter", "teamFilter", "fixtureFilter", "dateFrom", "dateTo"].forEach(id => {
+      el(id).addEventListener("change", rebuildReportWithCurrentData);
+    });
+    el("resetFilters").addEventListener("click", resetFilters);
     el("downloadSummary").addEventListener("click", downloadSummary);
     el("successResults").addEventListener("change", rebuildCurrentReportAfterSettingChange);
     el("dedupeRows").addEventListener("change", rebuildCurrentReportAfterSettingChange);
