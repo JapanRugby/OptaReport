@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Rugby Dropbox CSV Player Report</title>
+  <title>Rugby Dropbox CSV Player Report v2</title>
   <style>
     :root {
       --bg: #f6f7fb;
@@ -162,7 +162,7 @@
 </head>
 <body>
   <header>
-    <h1>Rugby Dropbox CSV Player Report</h1>
+    <h1>Rugby Dropbox CSV Player Report v2</h1>
     <p>Dropboxフォルダ内のCSVを自動取得し、選手別のCarry数・Tackle成功率を集計します。</p>
   </header>
 
@@ -207,6 +207,7 @@
           </ol>
           <input id="redirectUri" type="text" readonly>
           <p class="hint"><code>file://</code> で直接開くとOAuthリダイレクトに使えない場合があります。GitHub PagesなどのHTTPS、またはローカルHTTPサーバーで開いてください。</p>
+          <p class="hint">v2: 日本語を含むDropboxパスでもダウンロードできるよう、Dropbox-API-ArgヘッダーをASCII安全化し、通信失敗時の表示を詳しくしました。</p>
         </details>
 
         <div id="dropboxStatus" class="status"></div>
@@ -292,6 +293,21 @@
   };
   const fmt = (v, digits = 0) => Number.isFinite(v) ? v.toLocaleString("ja-JP", { maximumFractionDigits: digits, minimumFractionDigits: digits }) : "";
   const pct = (part, total) => total ? `${fmt(part / total * 100, 1)}%` : "-";
+
+  // Dropbox content endpoints put JSON arguments in an HTTP header.
+  // Header values must be ASCII-safe; this matters when paths contain Japanese characters.
+  function dropboxHeaderSafeJson(obj) {
+    return JSON.stringify(obj).replace(/[\u007f-\uffff]/g, ch => {
+      return "\\u" + ("0000" + ch.charCodeAt(0).toString(16)).slice(-4);
+    });
+  }
+
+  function fetchFailedHint(endpoint, err) {
+    const reason = err && err.message ? err.message : String(err);
+    return `${endpoint} への通信に失敗しました: ${reason}\n` +
+      `確認してください: インターネット接続 / ブラウザ拡張機能や広告ブロッカー / Dropboxのログイン状態 / HTTPSで開いているか。\n` +
+      `CSVやフォルダ名に日本語が含まれる場合は、この版ではDropbox-API-ArgヘッダーをASCII安全化しています。`;
+  }
 
   function redirectUri() {
     return window.location.origin + window.location.pathname;
@@ -412,11 +428,16 @@
       code_verifier: verifier
     });
 
-    const res = await fetch("https://api.dropboxapi.com/oauth2/token", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body
-    });
+    let res;
+    try {
+      res = await fetch("https://api.dropboxapi.com/oauth2/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body
+      });
+    } catch (err) {
+      throw new Error(fetchFailedHint("Dropbox OAuth token", err));
+    }
     if (!res.ok) throw new Error(`Dropbox OAuth token error ${res.status}: ${await res.text()}`);
     const tokenData = await res.json();
     localStorage.setItem(STORAGE.token, tokenData.access_token);
@@ -445,14 +466,19 @@
 
   async function dropboxRpc(endpoint, body) {
     const token = getDropboxToken();
-    const res = await fetch(`https://api.dropboxapi.com/2/${endpoint}`, {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${token}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(body)
-    });
+    let res;
+    try {
+      res = await fetch(`https://api.dropboxapi.com/2/${endpoint}`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(body)
+      });
+    } catch (err) {
+      throw new Error(fetchFailedHint(`Dropbox API ${endpoint}`, err));
+    }
     if (res.status === 401) {
       localStorage.removeItem(STORAGE.token);
       localStorage.removeItem(STORAGE.expiresAt);
@@ -488,13 +514,18 @@
 
   async function downloadDropboxFile(path) {
     const token = getDropboxToken();
-    const res = await fetch("https://content.dropboxapi.com/2/files/download", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${token}`,
-        "Dropbox-API-Arg": JSON.stringify({ path })
-      }
-    });
+    let res;
+    try {
+      res = await fetch("https://content.dropboxapi.com/2/files/download", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "Dropbox-API-Arg": dropboxHeaderSafeJson({ path })
+        }
+      });
+    } catch (err) {
+      throw new Error(fetchFailedHint(`Dropbox file download ${path}`, err));
+    }
     if (res.status === 401) {
       localStorage.removeItem(STORAGE.token);
       localStorage.removeItem(STORAGE.expiresAt);
