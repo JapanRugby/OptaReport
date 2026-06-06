@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Rugby Dropbox CSV Player Report v4</title>
+  <title>Rugby Dropbox CSV Player Report v7</title>
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
   <style>
     :root {
@@ -166,8 +166,8 @@
 </head>
 <body>
   <header>
-    <h1>Rugby Dropbox CSV Player Report v4</h1>
-    <p>Dropboxフォルダ内のCSVを高速取得し、選手別のCarry数・Tackle成功率を集計します。</p>
+    <h1>Rugby Dropbox CSV Player Report v7</h1>
+    <p>Dropboxフォルダ内のCSVを高速取得し、選手別の指定パフォーマンス指標を集計します。</p>
   </header>
 
   <main>
@@ -229,7 +229,7 @@
           </ol>
           <input id="redirectUri" type="text" readonly>
           <p class="hint"><code>file://</code> で直接開くとOAuthリダイレクトに使えない場合があります。GitHub PagesなどのHTTPS、またはローカルHTTPサーバーで開いてください。</p>
-          <p class="hint">v4: 1300件以上のCSV向けの差分キャッシュに加え、Season / Competition / Fixture / Date範囲 / Team Nameフィルターを追加しました。</p>
+          <p class="hint">v7: Tackle関連指標を Opta の Tackle Order / Qualifier5 に基づき、初期設定で 1st Tackler のみに限定しました。</p>
         </details>
 
         <div id="dropboxStatus" class="status"></div>
@@ -237,8 +237,25 @@
 
       <div class="card span-4">
         <h2>集計設定</h2>
-        <label>タックル成功に含める ActionResultName</label>
-        <input id="successResults" type="text" value="Complete, Passive, Sack, Turnover Won, Forced in Touch">
+        <label>Tackle Completion%の分子に含める ActionResultName</label>
+        <input id="successResults" type="text" value="Complete, Passive, Offload Allowed, Turnover Won, Forced in Touch, Pen Conceded, Try Saver, Sack, Ineffective">
+        <label>Tackle関連指標の対象</label>
+        <select id="tackleOrderFilter">
+          <option value="first" selected>1st Tacklerのみ（Qualifier5Name = 1st Tackler / Qualifier5 = 708）</option>
+          <option value="all">全Tackle</option>
+        </select>
+        <p class="hint">Tackle Attempt / Completion% / Dominance% はこの設定に従います。1st Tacklerのみの場合、action ID 2 / Tackle のうち Qualifier5 が 1st Tackler の行だけを集計します。</p>
+        <label>Post Contact Metresに使う列</label>
+        <select id="postContactMetresColumn">
+          <option value="Metres4" selected>Metres4（推奨）</option>
+          <option value="Metres3">Metres3</option>
+          <option value="Metres2">Metres2</option>
+          <option value="Metres">Metres</option>
+        </select>
+        <label>Attack Ruck OOA成功に含める ActionTypeName</label>
+        <input id="attackRuckOOASuccessTypes" type="text" value="Secured, Cleaned Out">
+        <label>Jackal成功に含める ActionTypeName</label>
+        <input id="jackalSuccessTypes" type="text" value="Penalty Won, Turnover Won">
         <div class="checkbox-line">
           <input id="dedupeRows" type="checkbox" checked>
           <label for="dedupeRows">同じ FXID + ID の重複行を除外</label>
@@ -247,7 +264,19 @@
           <input id="includeMissedAction" type="checkbox">
           <label for="includeMissedAction">actionName = Missed Tackle を分母に追加</label>
         </div>
-        <p class="hint">サンプルCSVでは <code>Tackle / Missed</code> と <code>Missed Tackle</code> が対応しているため、通常は追加しない方が安全です。</p>
+        <p class="hint">Opta定義では action=2 の <code>Missed</code> がタックル失敗です。1st Tackler限定時は action=2 かつ Qualifier5=708 の <code>Missed</code> も分母に含まれます。<code>Missed Tackle</code> actionはQualifier5を持たないことが多いため、通常は追加しない方が安全です。</p>
+        <details>
+          <summary>Opta定義メモ</summary>
+          <ul class="hint">
+            <li><strong>Playing Minutes</strong>: action ID 41 = Sub Out / Player Leaves Field、action ID 42 = Sub In / Player Enters Field から算出します。</li>
+            <li><strong>Tackle Attempt</strong>: 初期設定では action ID 2 / actionName = Tackle のうち、qualifier5Name = 1st Tackler / qualifier5 = 708 のみを分母にします。</li>
+            <li><strong>Tackle Dominance%</strong>: 1st Tacklerに限定したTackle Attemptのうち、qualifier4Name = Dominant Tackle の割合です。</li>
+            <li><strong>Carry Dominance%</strong>: qualifier4Name = Dominant Contact ÷ Carry Attempt。</li>
+            <li><strong>Post Contact Metres</strong>: Carryの Metres4。Opta定義では、最初のタックラーとの接触からキャリー終了までの距離です。</li>
+            <li><strong>Attack Ruck OOA</strong>: action ID 43 / Ruck OOA かつ qualifier4Name = Attacking OOA。成功は初期設定で Secured / Cleaned Out。</li>
+            <li><strong>Jackal</strong>: qualifier5Name = Jackal Attempt を試行、ActionTypeName = Penalty Won / Turnover Won を成功として集計します。</li>
+          </ul>
+        </details>
 
         <details>
           <summary>ローカルCSVで確認する</summary>
@@ -338,7 +367,7 @@
     rawRows: [],
     sourceNames: [],
     reportRows: [],
-    sortKey: "carries",
+    sortKey: "playingMinutes",
     sortDir: "desc",
     loadedCsvPaths: [],
     fileSummaries: []
@@ -578,7 +607,7 @@
       .sort((a, b) => clean(a.path_display || a.path_lower).localeCompare(clean(b.path_display || b.path_lower), "ja"));
   }
 
-  const CACHE_DB_NAME = "rugbyOptaDropboxReportCacheV4";
+  const CACHE_DB_NAME = "rugbyOptaDropboxReportCacheV7";
   const CACHE_STORE = "fileSummaries";
   let cacheDbPromise = null;
 
@@ -594,6 +623,10 @@
   function cacheSettingsKey() {
     return JSON.stringify({
       successResults: [...getSuccessSet()].sort(),
+      tackleOrderFilter: tackleOrderMode(),
+      postContactMetresColumn: postContactMetresColumn(),
+      attackRuckOOASuccessTypes: [...getAttackRuckOOASuccessSet()].sort(),
+      jackalSuccessTypes: [...getJackalSuccessSet()].sort(),
       includeMissedAction: el("includeMissedAction").checked,
       dedupeRows: el("dedupeRows").checked
     });
@@ -966,13 +999,7 @@
       shirt: clean(r.playerShirtNumber),
       position: clean(r.playerpositionName),
       matches: new Set(),
-      carries: 0,
-      carryMetres: 0,
-      carryGainline: 0,
-      carryDominantContact: 0,
-      carryIneffectiveContact: 0,
-      carryTries: 0,
-      carryErrors: 0,
+      playingMinutes: 0,
       tackleAttempts: 0,
       tackleSuccess: 0,
       tackleMissed: 0,
@@ -980,7 +1007,190 @@
       tacklePassive: 0,
       tackleOffloadAllowed: 0,
       tacklePenConceded: 0,
-      tackleIneffective: 0
+      tackleIneffective: 0,
+      carryAttempts: 0,
+      carries: 0,
+      carryMetres: 0,
+      carryGainline: 0,
+      carryDominant: 0,
+      carryDominantContact: 0,
+      carryIneffectiveContact: 0,
+      carryTries: 0,
+      carryErrors: 0,
+      postContactMetres: 0,
+      attackRuckOOAArrivals: 0,
+      attackRuckOOASuccess: 0,
+      jackalAttempts: 0,
+      jackalSuccess: 0
+    };
+  }
+
+  function playerKeyFromRow(r) {
+    const id = clean(r.PLID || r.player_id || "");
+    const player = clean(r.playerName || r.player || "不明");
+    const team = clean(r.teamName || r.team || "不明");
+    return `${id}|${player}|${team}`;
+  }
+
+  function commaSet(id) {
+    const node = el(id);
+    return new Set((node ? node.value : "").split(",").map(s => clean(s)).filter(Boolean));
+  }
+
+  function getSuccessSet() {
+    return commaSet("successResults");
+  }
+
+  function getAttackRuckOOASuccessSet() {
+    return commaSet("attackRuckOOASuccessTypes");
+  }
+
+  function getJackalSuccessSet() {
+    return commaSet("jackalSuccessTypes");
+  }
+
+  function postContactMetresColumn() {
+    const node = el("postContactMetresColumn");
+    return node ? (node.value || "Metres4") : "Metres4";
+  }
+
+  function tackleOrderMode() {
+    const node = el("tackleOrderFilter");
+    return node ? (node.value || "first") : "first";
+  }
+
+  function matchClockMinutes(value) {
+    const raw = clean(value);
+    if (!raw) return 0;
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return 0;
+    const whole = Math.floor(Math.abs(n));
+    const seconds = whole % 100;
+    const minutes = Math.floor(whole / 100);
+    if (seconds < 60) return minutes + seconds / 60;
+    return n / 60;
+  }
+
+  function computePlayingMinutes(rows, sourceName) {
+    const matchMap = new Map();
+    rows.forEach(r => {
+      const meta = rowMeta(r, r.__source || sourceName || "");
+      const matchId = meta.matchId || clean(r.__source) || clean(sourceName) || "unknown";
+      if (!matchMap.has(matchId)) matchMap.set(matchId, { end: 0, players: new Map() });
+      const match = matchMap.get(matchId);
+      const t = matchClockMinutes(r.MatchTime || r.matchTime || r.time || r.Time);
+      if (t > match.end) match.end = t;
+      if (!clean(r.playerName)) return;
+      const key = playerKeyFromRow(r);
+      if (!match.players.has(key)) match.players.set(key, { firstActionTime: null, events: [] });
+      const p = match.players.get(key);
+      const action = clean(r.actionName);
+      const actionId = clean(r.action);
+      const isSubIn = action === "Sub In" || action === "Player Enters Field" || actionId === "42";
+      const isSubOut = action === "Sub Out" || action === "Player Leaves Field" || actionId === "41";
+      if (p.firstActionTime == null || t < p.firstActionTime) p.firstActionTime = t;
+      if (isSubIn) p.events.push({ type: "Sub In", time: t });
+      if (isSubOut) p.events.push({ type: "Sub Out", time: t });
+    });
+
+    const minutesByPlayer = new Map();
+    matchMap.forEach(match => {
+      const finalTime = match.end > 0 ? match.end : 80;
+      match.players.forEach((p, key) => {
+        const events = p.events.slice().sort((a, b) => a.time - b.time || (a.type === "Sub Out" ? -1 : 1));
+        const firstSubIn = events.find(e => e.type === "Sub In");
+        const firstSubOut = events.find(e => e.type === "Sub Out");
+        let on = false;
+        if (!firstSubIn) on = true;
+        else if (firstSubOut && firstSubOut.time <= firstSubIn.time) on = true;
+        else if (p.firstActionTime != null && p.firstActionTime < firstSubIn.time) on = true;
+        let start = on ? 0 : null;
+        let minutes = 0;
+        events.forEach(e => {
+          const t = Math.max(0, Math.min(finalTime, e.time));
+          if (e.type === "Sub In") {
+            if (!on) { start = t; on = true; }
+          } else if (e.type === "Sub Out") {
+            if (on) {
+              minutes += Math.max(0, t - (start ?? 0));
+              on = false;
+              start = null;
+            }
+          }
+        });
+        if (on) minutes += Math.max(0, finalTime - (start ?? 0));
+        minutesByPlayer.set(key, (minutesByPlayer.get(key) || 0) + minutes);
+      });
+    });
+    return minutesByPlayer;
+  }
+
+  function applyMetricRow(p, r, metricSettings) {
+    const action = clean(r.actionName);
+    const actionId = clean(r.action);
+    const result = clean(r.ActionResultName);
+    const type = clean(r.ActionTypeName);
+    const q3 = clean(r.qualifier3Name || r.Qualifier3Name);
+    const q4 = clean(r.qualifier4Name || r.Qualifier4Name);
+    const q5 = clean(r.qualifier5Name || r.Qualifier5Name);
+    const q5Id = clean(r.qualifier5 || r.Qualifier5);
+    const isCarry = action === "Carry" || actionId === "1";
+    const isTackle = action === "Tackle" || actionId === "2";
+    const isMissedTackleAction = action === "Missed Tackle" || actionId === "12";
+    const isRuckOOA = action === "Ruck OOA" || actionId === "43";
+    const isFirstTackler = q5 === "1st Tackler" || q5Id === "708";
+    const includeTackleForMetrics = metricSettings.tackleOrderFilter !== "first" || isFirstTackler;
+
+    if (isCarry) {
+      p.carryAttempts += 1;
+      p.carries += 1;
+      p.carryMetres += num(r.Metres);
+      p.postContactMetres += num(r[metricSettings.postContactColumn]);
+      if (q3 === "Crossed Gain line") p.carryGainline += 1;
+      if (q4 === "Dominant Contact") {
+        p.carryDominant += 1;
+        p.carryDominantContact += 1;
+      }
+      if (q4 === "Ineffective Contact") p.carryIneffectiveContact += 1;
+      if (result === "Try Scored") p.carryTries += 1;
+      if (result === "Error" || result === "Penalty Conceded") p.carryErrors += 1;
+    }
+
+    if (isTackle && includeTackleForMetrics) {
+      p.tackleAttempts += 1;
+      if (metricSettings.tackleSuccessResults.has(result)) p.tackleSuccess += 1;
+      if (result === "Missed") p.tackleMissed += 1;
+      if (result === "Passive") p.tacklePassive += 1;
+      if (result === "Offload Allowed") p.tackleOffloadAllowed += 1;
+      if (result === "Pen Conceded") p.tacklePenConceded += 1;
+      if (result === "Ineffective") p.tackleIneffective += 1;
+      if (q4 === "Dominant Tackle") p.tackleDominant += 1;
+    }
+
+    if (metricSettings.includeMissedAction && isMissedTackleAction && (metricSettings.tackleOrderFilter !== "first" || isFirstTackler)) {
+      p.tackleAttempts += 1;
+      p.tackleMissed += 1;
+    }
+
+    if (isRuckOOA && q4 === "Attacking OOA") {
+      p.attackRuckOOAArrivals += 1;
+      if (metricSettings.attackRuckOOASuccessTypes.has(type)) p.attackRuckOOASuccess += 1;
+    }
+
+    if (isRuckOOA && q5 === "Jackal Attempt") {
+      p.jackalAttempts += 1;
+      if (metricSettings.jackalSuccessTypes.has(type)) p.jackalSuccess += 1;
+    }
+  }
+
+  function currentMetricSettings() {
+    return {
+      tackleSuccessResults: getSuccessSet(),
+      tackleOrderFilter: tackleOrderMode(),
+      includeMissedAction: el("includeMissedAction").checked,
+      postContactColumn: postContactMetresColumn(),
+      attackRuckOOASuccessTypes: getAttackRuckOOASuccessSet(),
+      jackalSuccessTypes: getJackalSuccessSet()
     };
   }
 
@@ -997,8 +1207,7 @@
       });
     }
 
-    const successResults = getSuccessSet();
-    const includeMissedAction = el("includeMissedAction").checked;
+    const metricSettings = currentMetricSettings();
     const players = new Map();
     const matches = new Map();
     const teams = new Set();
@@ -1009,15 +1218,8 @@
     const dateValues = new Set();
     const teamRowCounts = {};
 
-    function playerKey(r) {
-      const id = clean(r.PLID || r.player_id || "");
-      const player = clean(r.playerName || r.player || "不明");
-      const team = clean(r.teamName || r.team || "不明");
-      return `${id}|${player}|${team}`;
-    }
-
     function ensurePlayer(r) {
-      const key = playerKey(r);
+      const key = playerKeyFromRow(r);
       if (!players.has(key)) players.set(key, blankPlayer(r));
       return players.get(key);
     }
@@ -1040,37 +1242,12 @@
       if (!clean(r.playerName)) return;
       const p = ensurePlayer(r);
       if (meta.matchId) p.matches.add(meta.matchId);
+      applyMetricRow(p, r, metricSettings);
+    });
 
-      const action = clean(r.actionName);
-      const result = clean(r.ActionResultName);
-      const q3 = clean(r.qualifier3Name);
-      const q4 = clean(r.qualifier4Name);
-
-      if (action === "Carry") {
-        p.carries += 1;
-        p.carryMetres += num(r.Metres);
-        if (q3 === "Crossed Gain line") p.carryGainline += 1;
-        if (q4 === "Dominant Contact") p.carryDominantContact += 1;
-        if (q4 === "Ineffective Contact") p.carryIneffectiveContact += 1;
-        if (result === "Try Scored") p.carryTries += 1;
-        if (result === "Error" || result === "Penalty Conceded") p.carryErrors += 1;
-      }
-
-      if (action === "Tackle") {
-        p.tackleAttempts += 1;
-        if (successResults.has(result)) p.tackleSuccess += 1;
-        if (result === "Missed") p.tackleMissed += 1;
-        if (result === "Passive") p.tacklePassive += 1;
-        if (result === "Offload Allowed") p.tackleOffloadAllowed += 1;
-        if (result === "Pen Conceded") p.tacklePenConceded += 1;
-        if (result === "Ineffective") p.tackleIneffective += 1;
-        if (q4 === "Dominant Tackle") p.tackleDominant += 1;
-      }
-
-      if (includeMissedAction && action === "Missed Tackle") {
-        p.tackleAttempts += 1;
-        p.tackleMissed += 1;
-      }
+    const minutesByPlayer = computePlayingMinutes(rows, sourceName);
+    minutesByPlayer.forEach((minutes, key) => {
+      if (players.has(key)) players.get(key).playingMinutes = minutes;
     });
 
     const sortedDates = [...dateValues].sort();
@@ -1219,9 +1396,12 @@
     const teams = new Set();
     let rowCount = 0;
     const numericFields = [
-      "carries", "carryMetres", "carryGainline", "carryDominantContact", "carryIneffectiveContact",
-      "carryTries", "carryErrors", "tackleAttempts", "tackleSuccess", "tackleMissed", "tackleDominant",
-      "tacklePassive", "tackleOffloadAllowed", "tacklePenConceded", "tackleIneffective"
+      "playingMinutes",
+      "tackleAttempts", "tackleSuccess", "tackleMissed", "tackleDominant",
+      "tacklePassive", "tackleOffloadAllowed", "tacklePenConceded", "tackleIneffective",
+      "carryAttempts", "carries", "carryMetres", "carryGainline", "carryDominant", "carryDominantContact", "carryIneffectiveContact",
+      "carryTries", "carryErrors", "postContactMetres",
+      "attackRuckOOAArrivals", "attackRuckOOASuccess", "jackalAttempts", "jackalSuccess"
     ];
 
     function ensureCombined(fp) {
@@ -1256,22 +1436,34 @@
       });
     });
 
-    state.reportRows = [...players.values()].map(p => ({
-      ...p,
-      matchCount: p.matches.size,
-      metresPerCarry: p.carries ? p.carryMetres / p.carries : 0,
-      gainlinePct: p.carries ? p.carryGainline / p.carries : 0,
-      tackleSuccessPct: p.tackleAttempts ? p.tackleSuccess / p.tackleAttempts : 0,
-      dominantTacklePct: p.tackleAttempts ? p.tackleDominant / p.tackleAttempts : 0
-    }));
-
+    state.reportRows = finalizeReportRows(players);
     renderSummary(rowCount, matches, teams);
     renderTable();
     el("downloadSummary").disabled = state.reportRows.length === 0;
   }
 
-  function getSuccessSet() {
-    return new Set(el("successResults").value.split(",").map(s => clean(s)).filter(Boolean));
+  function finalizeReportRows(players) {
+    return [...players.values()].map(p => {
+      const carryAttempts = num(p.carryAttempts || p.carries);
+      const tackleAttempts = num(p.tackleAttempts);
+      const attackRuckOOAArrivals = num(p.attackRuckOOAArrivals);
+      const jackalAttempts = num(p.jackalAttempts);
+      return {
+        ...p,
+        carryAttempts,
+        matchCount: p.matches instanceof Set ? p.matches.size : (p.matches || []).length,
+        playingMinutes: num(p.playingMinutes),
+        tackleCompletionPct: tackleAttempts ? num(p.tackleSuccess) / tackleAttempts : 0,
+        tackleSuccessPct: tackleAttempts ? num(p.tackleSuccess) / tackleAttempts : 0,
+        tackleDominancePct: tackleAttempts ? num(p.tackleDominant) / tackleAttempts : 0,
+        dominantTacklePct: tackleAttempts ? num(p.tackleDominant) / tackleAttempts : 0,
+        carryDominancePct: carryAttempts ? num(p.carryDominant || p.carryDominantContact) / carryAttempts : 0,
+        metresPerCarry: carryAttempts ? num(p.carryMetres) / carryAttempts : 0,
+        gainlinePct: carryAttempts ? num(p.carryGainline) / carryAttempts : 0,
+        attackRuckOOAEffectivenessPct: attackRuckOOAArrivals ? num(p.attackRuckOOASuccess) / attackRuckOOAArrivals : 0,
+        jackalEffectivenessPct: jackalAttempts ? num(p.jackalSuccess) / jackalAttempts : 0
+      };
+    });
   }
 
   function rowKey(r) {
@@ -1302,20 +1494,13 @@
       });
     }
 
-    const successResults = getSuccessSet();
-    const includeMissedAction = el("includeMissedAction").checked;
+    const metricSettings = currentMetricSettings();
     const players = new Map();
     const matches = new Map();
     const teams = new Set();
 
-    function playerKey(r) {
-      const id = clean(r.PLID || r.player_id || "");
-      const player = clean(r.playerName || r.player || "不明");
-      const team = clean(r.teamName || r.team || "不明");
-      return `${id}|${player}|${team}`;
-    }
     function ensurePlayer(r) {
-      const key = playerKey(r);
+      const key = playerKeyFromRow(r);
       if (!players.has(key)) players.set(key, blankPlayer(r));
       return players.get(key);
     }
@@ -1329,48 +1514,15 @@
       if (!clean(r.playerName)) return;
       const p = ensurePlayer(r);
       if (meta.matchId || clean(r.__source)) p.matches.add(meta.matchId || clean(r.__source));
-
-      const action = clean(r.actionName);
-      const result = clean(r.ActionResultName);
-      const q3 = clean(r.qualifier3Name);
-      const q4 = clean(r.qualifier4Name);
-
-      if (action === "Carry") {
-        p.carries += 1;
-        p.carryMetres += num(r.Metres);
-        if (q3 === "Crossed Gain line") p.carryGainline += 1;
-        if (q4 === "Dominant Contact") p.carryDominantContact += 1;
-        if (q4 === "Ineffective Contact") p.carryIneffectiveContact += 1;
-        if (result === "Try Scored") p.carryTries += 1;
-        if (result === "Error" || result === "Penalty Conceded") p.carryErrors += 1;
-      }
-
-      if (action === "Tackle") {
-        p.tackleAttempts += 1;
-        if (successResults.has(result)) p.tackleSuccess += 1;
-        if (result === "Missed") p.tackleMissed += 1;
-        if (result === "Passive") p.tacklePassive += 1;
-        if (result === "Offload Allowed") p.tackleOffloadAllowed += 1;
-        if (result === "Pen Conceded") p.tacklePenConceded += 1;
-        if (result === "Ineffective") p.tackleIneffective += 1;
-        if (q4 === "Dominant Tackle") p.tackleDominant += 1;
-      }
-
-      if (includeMissedAction && action === "Missed Tackle") {
-        p.tackleAttempts += 1;
-        p.tackleMissed += 1;
-      }
+      applyMetricRow(p, r, metricSettings);
     });
 
-    state.reportRows = [...players.values()].map(p => ({
-      ...p,
-      matchCount: p.matches.size,
-      metresPerCarry: p.carries ? p.carryMetres / p.carries : 0,
-      gainlinePct: p.carries ? p.carryGainline / p.carries : 0,
-      tackleSuccessPct: p.tackleAttempts ? p.tackleSuccess / p.tackleAttempts : 0,
-      dominantTacklePct: p.tackleAttempts ? p.tackleDominant / p.tackleAttempts : 0
-    }));
+    const minutesByPlayer = computePlayingMinutes(rows, "");
+    minutesByPlayer.forEach((minutes, key) => {
+      if (players.has(key)) players.get(key).playingMinutes = minutes;
+    });
 
+    state.reportRows = finalizeReportRows(players);
     renderSummary(rows, matches, teams);
     renderTable();
     el("downloadSummary").disabled = state.reportRows.length === 0;
@@ -1378,18 +1530,27 @@
 
   function renderSummary(rowCountOrRows, matches, teams) {
     const rowCount = Array.isArray(rowCountOrRows) ? rowCountOrRows.length : Number(rowCountOrRows || 0);
-    const totalCarries = state.reportRows.reduce((s, p) => s + p.carries, 0);
-    const carryMetres = state.reportRows.reduce((s, p) => s + p.carryMetres, 0);
-    const tAtt = state.reportRows.reduce((s, p) => s + p.tackleAttempts, 0);
-    const tSucc = state.reportRows.reduce((s, p) => s + p.tackleSuccess, 0);
+    const playingMinutes = state.reportRows.reduce((s, p) => s + num(p.playingMinutes), 0);
+    const carryAttempts = state.reportRows.reduce((s, p) => s + num(p.carryAttempts), 0);
+    const tAtt = state.reportRows.reduce((s, p) => s + num(p.tackleAttempts), 0);
+    const tSucc = state.reportRows.reduce((s, p) => s + num(p.tackleSuccess), 0);
+    const pcm = state.reportRows.reduce((s, p) => s + num(p.postContactMetres), 0);
+    const ooa = state.reportRows.reduce((s, p) => s + num(p.attackRuckOOAArrivals), 0);
+    const ooaSucc = state.reportRows.reduce((s, p) => s + num(p.attackRuckOOASuccess), 0);
+    const jackal = state.reportRows.reduce((s, p) => s + num(p.jackalAttempts), 0);
+    const jackalSucc = state.reportRows.reduce((s, p) => s + num(p.jackalSuccess), 0);
     el("summary").innerHTML = [
       [matches.size, "試合数"],
       [teams.size, "チーム数"],
-      [totalCarries, "Carry数"],
-      [fmt(carryMetres), "Carryメートル"],
-      [tAtt, "Tackle試行"],
-      [pct(tSucc, tAtt), "Tackle成功率"],
-      [rowCount.toLocaleString("ja-JP"), "読み込み行数"],
+      [fmt(playingMinutes, 1), "Playing Minutes"],
+      [tAtt, "1st Tackle Attempt"],
+      [pct(tSucc, tAtt), "1st Tackle Completion%"],
+      [carryAttempts, "Carry Attempt"],
+      [fmt(pcm, 0), "Post Contact Metres"],
+      [ooa, "Attack Ruck OOA Arrivals"],
+      [pct(ooaSucc, ooa), "Attack Ruck OOA Effectiveness%"],
+      [jackal, "Jackal Attempt"],
+      [pct(jackalSucc, jackal), "Jackal Effectiveness%"],
       [state.reportRows.length, "選手数"]
     ].map(([n, label]) => `<div class="box"><div class="num">${n}</div><div class="label">${label}</div></div>`).join("");
 
@@ -1402,24 +1563,22 @@
   }
 
   const columns = [
-    ["teamName", "Team", "text"],
+    ["teamName", "Team Name", "text"],
     ["playerName", "Player", "text"],
     ["shirt", "No", "num"],
     ["position", "Position", "text"],
     ["matchCount", "Matches", "num"],
-    ["carries", "Carry", "num"],
-    ["carryMetres", "Carry m", "num"],
-    ["metresPerCarry", "m/Carry", "num1"],
-    ["gainlinePct", "Gainline %", "pctbar"],
-    ["carryTries", "Carry Try", "num"],
-    ["carryErrors", "Carry Error/Pen", "num"],
-    ["tackleAttempts", "Tackle", "num"],
-    ["tackleSuccess", "Tackle成功", "num"],
-    ["tackleSuccessPct", "Tackle成功率", "pctbar"],
-    ["tackleMissed", "Missed", "num"],
-    ["tackleDominant", "Dominant T", "num"],
-    ["tackleOffloadAllowed", "Offload Allowed", "num"],
-    ["tacklePenConceded", "Pen Conceded", "num"]
+    ["playingMinutes", "Playing Minutes", "num1"],
+    ["tackleAttempts", "1st Tackle Attempt", "num"],
+    ["tackleCompletionPct", "1st Tackle Completion%", "pctbar"],
+    ["tackleDominancePct", "1st Tackle Dominance%", "pctbar"],
+    ["carryAttempts", "Carry Attempt", "num"],
+    ["carryDominancePct", "Carry Dominance%", "pctbar"],
+    ["postContactMetres", "Post Contact Metres", "num"],
+    ["attackRuckOOAArrivals", "Attack Ruck OOA Arrivals", "num"],
+    ["attackRuckOOAEffectivenessPct", "Attack Ruck OOA Effectiveness%", "pctbar"],
+    ["jackalAttempts", "Jackal Attempt", "num"],
+    ["jackalEffectivenessPct", "Jackal Effectiveness%", "pctbar"]
   ];
 
   function filteredRows() {
@@ -1576,7 +1735,9 @@
     });
     el("resetFilters").addEventListener("click", resetFilters);
     el("downloadSummary").addEventListener("click", downloadSummary);
-    el("successResults").addEventListener("change", rebuildCurrentReportAfterSettingChange);
+    ["successResults", "tackleOrderFilter", "postContactMetresColumn", "attackRuckOOASuccessTypes", "jackalSuccessTypes"].forEach(id => {
+      el(id).addEventListener("change", rebuildCurrentReportAfterSettingChange);
+    });
     el("dedupeRows").addEventListener("change", rebuildCurrentReportAfterSettingChange);
     el("includeMissedAction").addEventListener("change", rebuildCurrentReportAfterSettingChange);
   }
