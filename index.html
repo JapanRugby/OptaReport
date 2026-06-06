@@ -3,7 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Rugby Dropbox CSV Player Report</title>
+  <title>Rugby Dropbox CSV Player Report v10</title>
+  <!-- Build: v10 verified index.html -->
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
   <style>
     :root {
@@ -144,6 +145,13 @@
     tbody tr:hover { background: #f8fbfd; }
     .right { text-align: right; }
     .status { margin-top: 10px; font-size: 13px; color: var(--muted); min-height: 20px; white-space: pre-wrap; }
+    .progress-panel { display:none; margin-top:12px; border:1px solid #e4e8f0; border-radius:12px; padding:12px; background:#fbfcfe; }
+    .progress-track { width:100%; height:14px; border-radius:999px; background:#e8edf5; overflow:hidden; }
+    .progress-fill { height:100%; width:0%; background:var(--accent); transition:width .2s ease; }
+    .progress-meta { display:grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap:8px; margin-top:10px; font-size:12px; color:var(--muted); }
+    .progress-meta strong { display:block; color:var(--ink); font-size:16px; line-height:1.1; }
+    .progress-current { margin-top:8px; font-size:12px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    @media (max-width: 700px) { .progress-meta { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
     .bar {
       display: inline-block;
       width: 70px;
@@ -166,12 +174,23 @@
 </head>
 <body>
   <header>
-    <h1>Rugby Dropbox CSV Player Report v7</h1>
-    <p>Dropboxフォルダ内のCSVを高速取得し、選手別の指定パフォーマンス指標を集計します。</p>
+    <h1>Rugby Dropbox CSV Player Report v10</h1>
+    <p>Dropboxフォルダ内のCSVを高速取得し、選手別の指定パフォーマンス指標とSamurai Statsを集計します。</p>
   </header>
 
   <main>
     <section class="grid">
+      <div class="card span-12">
+        <h2>Version v10 / 更新内容</h2>
+        <ul class="hint" style="margin:0; padding-left:20px">
+          <li>ファイル更新確認用に、ページ上部のバージョンを v10 に更新しました。</li>
+          <li>Samurai Stats系の表示は Samurai Stats 1列のみです。</li>
+          <li>Samurai Stats = (Positive Action − Negative Action) ÷ Playing Ball In Play Minutes です。</li>
+          <li>Samurai + / Samurai - / Samurai Net / Playing BIP Minutes / Contribution列は非表示です。</li>
+          <li>キャッシュ名はv9系を維持していますが、集計ロジックはSamurai Stats 1列表示版です。</li>
+        </ul>
+      </div>
+
       <div class="card span-8">
         <h2>Dropboxフォルダ自動読み込み</h2>
         <p class="hint">初回だけDropbox認証が必要です。認証後は、このブラウザに保存された設定でページ表示時にフォルダ内CSVを自動集計します。</p>
@@ -229,9 +248,19 @@
           </ol>
           <input id="redirectUri" type="text" readonly>
           <p class="hint"><code>file://</code> で直接開くとOAuthリダイレクトに使えない場合があります。GitHub PagesなどのHTTPS、またはローカルHTTPサーバーで開いてください。</p>
-          <p class="hint">index版: Tackle関連指標は1st Tackler限定。表示形式は Total / Per 80mins / Per Game から選択できます。</p>
+          <p class="hint">v10: ファイル更新確認用に画面上部のバージョン表示を更新しました。Tackle関連指標は1st Tackler限定。Samurai Statsは1列のみ表示し、Playing Ball In Play Minutesを分母にして計算します。表示形式は Total / Per 80mins / Per Game から選択できます。</p>
         </details>
 
+        <div id="dropboxProgress" class="progress-panel" aria-live="polite">
+          <div class="progress-track"><div id="dropboxProgressFill" class="progress-fill"></div></div>
+          <div class="progress-meta">
+            <div><strong id="progressProcessed">0/0</strong>処理済みCSV</div>
+            <div><strong id="progressCacheHits">0</strong>キャッシュ利用</div>
+            <div><strong id="progressDownloaded">0</strong>新規/更新DL</div>
+            <div><strong id="progressRows">0</strong>読み込み行数</div>
+          </div>
+          <div id="progressCurrent" class="progress-current"></div>
+        </div>
         <div id="dropboxStatus" class="status"></div>
       </div>
 
@@ -383,6 +412,22 @@
 
   const el = id => document.getElementById(id);
   const status = msg => { el("dropboxStatus").textContent = msg || ""; };
+  function setDropboxProgress(data = {}) {
+    const panel = el("dropboxProgress");
+    if (!panel) return;
+    const total = Math.max(0, Number(data.total || 0));
+    const completed = Math.max(0, Number(data.completed || 0));
+    const visible = data.visible !== false && (total > 0 || data.forceVisible);
+    panel.style.display = visible ? "block" : "none";
+    const pctValue = total ? Math.min(100, Math.max(0, completed / total * 100)) : 0;
+    el("dropboxProgressFill").style.width = `${pctValue}%`;
+    el("progressProcessed").textContent = `${completed}/${total}`;
+    el("progressCacheHits").textContent = Number(data.cacheHits || 0).toLocaleString("ja-JP");
+    el("progressDownloaded").textContent = Number(data.downloaded || 0).toLocaleString("ja-JP");
+    el("progressRows").textContent = Number(data.totalRows || 0).toLocaleString("ja-JP");
+    const errorText = data.errors ? ` / エラー ${data.errors}` : "";
+    el("progressCurrent").textContent = data.current ? `現在処理中: ${data.current}${errorText}` : (visible ? `Dropbox更新情報を確認中${errorText}` : "");
+  }
   const clean = v => (v == null ? "" : String(v).trim());
   const esc = v => clean(v).replace(/[&<>"]/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[ch]));
   const num = v => {
@@ -617,7 +662,7 @@
       .sort((a, b) => clean(a.path_display || a.path_lower).localeCompare(clean(b.path_display || b.path_lower), "ja"));
   }
 
-  const CACHE_DB_NAME = "rugbyOptaDropboxReportCacheV7";
+  const CACHE_DB_NAME = "rugbyOptaDropboxReportCacheV9";
   const CACHE_STORE = "fileSummaries";
   let cacheDbPromise = null;
 
@@ -811,6 +856,7 @@
       return;
     }
 
+    setDropboxProgress({ visible: false });
     status("Dropboxフォルダ内のCSV一覧を取得中...");
     const files = await listCsvFilesInFolder();
     if (!files.length) throw new Error("指定フォルダ内にCSVファイルが見つかりませんでした。");
@@ -825,20 +871,33 @@
     let totalRows = 0;
     let lastStatusAt = 0;
 
-    const updateProgress = (force = false) => {
+    const updateProgress = (force = false, current = "") => {
       const now = Date.now();
       if (!force && now - lastStatusAt < 250) return;
       lastStatusAt = now;
+      setDropboxProgress({
+        total: files.length,
+        completed,
+        cacheHits,
+        downloaded,
+        totalRows,
+        errors: errors.length,
+        current
+      });
       status(
-        `CSV処理中 ${completed}/${files.length}\n` +
-        `キャッシュ利用: ${cacheHits} / ダウンロード: ${downloaded} / エラー: ${errors.length}\n` +
+        `CSV処理中 ${completed}/${files.length}
+` +
+        `キャッシュ利用: ${cacheHits} / ダウンロード: ${downloaded} / エラー: ${errors.length}
+` +
         `読み込み行数: ${totalRows.toLocaleString("ja-JP")} / 並列数: ${concurrencyLimit()}`
       );
     };
 
+    updateProgress(true, "CSV一覧取得完了");
     await mapWithConcurrency(files, concurrencyLimit(), async (f) => {
       const path = f.path_lower || f.path_display;
       const display = f.path_display || path;
+      updateProgress(false, display);
       try {
         let summary = null;
         if (useCache) {
@@ -861,7 +920,7 @@
         errors.push(`${display}: ${e.message}`);
       } finally {
         completed += 1;
-        updateProgress();
+        updateProgress(true, display);
       }
     });
 
@@ -1031,7 +1090,10 @@
       attackRuckOOAArrivals: 0,
       attackRuckOOASuccess: 0,
       jackalAttempts: 0,
-      jackalSuccess: 0
+      jackalSuccess: 0,
+      playingBipMinutes: 0,
+      samuraiPositive: 0,
+      samuraiNegative: 0
     };
   }
 
@@ -1135,6 +1197,183 @@
     return minutesByPlayer;
   }
 
+
+  function timestampSeconds(value) {
+    const n = num(value);
+    return Number.isFinite(n) ? n : 0;
+  }
+
+  function mergeIntervals(intervals) {
+    const sorted = intervals
+      .filter(([s, e]) => Number.isFinite(s) && Number.isFinite(e) && e > s)
+      .sort((a, b) => a[0] - b[0]);
+    const merged = [];
+    sorted.forEach(([s, e]) => {
+      const last = merged[merged.length - 1];
+      if (!last || s > last[1]) merged.push([s, e]);
+      else if (e > last[1]) last[1] = e;
+    });
+    return merged;
+  }
+
+  function intervalOverlapSeconds(a, intervals) {
+    const [start, end] = a;
+    if (end <= start) return 0;
+    let total = 0;
+    intervals.forEach(([s, e]) => {
+      const overlap = Math.min(end, e) - Math.max(start, s);
+      if (overlap > 0) total += overlap;
+    });
+    return total;
+  }
+
+  function computePlayingBipMinutes(rows, sourceName) {
+    const matchMap = new Map();
+    rows.forEach(r => {
+      const meta = rowMeta(r, r.__source || sourceName || "");
+      const matchId = meta.matchId || clean(r.__source) || clean(sourceName) || "unknown";
+      if (!matchMap.has(matchId)) matchMap.set(matchId, { end: 0, sequenceIntervals: [], possessionIntervals: [], players: new Map() });
+      const match = matchMap.get(matchId);
+      const action = clean(r.actionName);
+      const actionId = clean(r.action);
+      const t = timestampSeconds(r.ps_timestamp || r.timestamp || r.startTime);
+      const end = timestampSeconds(r.ps_endstamp || r.endTimestamp || r.endTime);
+      if (t > match.end) match.end = t;
+      if (end > match.end) match.end = end;
+
+      if ((action === "Sequences" || actionId === "26") && end > t) match.sequenceIntervals.push([t, end]);
+      if ((action === "Possession" || action === "Possessions" || actionId === "15") && end > t) match.possessionIntervals.push([t, end]);
+
+      if (!clean(r.playerName)) return;
+      const key = playerKeyFromRow(r);
+      if (!match.players.has(key)) match.players.set(key, { firstActionTime: null, events: [] });
+      const p = match.players.get(key);
+      const isSubIn = action === "Sub In" || action === "Player Enters Field" || actionId === "42";
+      const isSubOut = action === "Sub Out" || action === "Player Leaves Field" || actionId === "41";
+      if (p.firstActionTime == null || t < p.firstActionTime) p.firstActionTime = t;
+      if (isSubIn) p.events.push({ type: "Sub In", time: t });
+      if (isSubOut) p.events.push({ type: "Sub Out", time: t });
+    });
+
+    const minutesByPlayer = new Map();
+    matchMap.forEach(match => {
+      const ballIntervals = mergeIntervals(match.sequenceIntervals.length ? match.sequenceIntervals : match.possessionIntervals);
+      if (!ballIntervals.length) return;
+      const finalTime = match.end > 0 ? match.end : ballIntervals[ballIntervals.length - 1][1];
+      match.players.forEach((p, key) => {
+        const events = p.events.slice().sort((a, b) => a.time - b.time || (a.type === "Sub Out" ? -1 : 1));
+        const firstSubIn = events.find(e => e.type === "Sub In");
+        const firstSubOut = events.find(e => e.type === "Sub Out");
+        let on = false;
+        if (!firstSubIn) on = true;
+        else if (firstSubOut && firstSubOut.time <= firstSubIn.time) on = true;
+        else if (p.firstActionTime != null && p.firstActionTime < firstSubIn.time) on = true;
+        let start = on ? 0 : null;
+        let seconds = 0;
+        events.forEach(e => {
+          const t = Math.max(0, Math.min(finalTime, e.time));
+          if (e.type === "Sub In") {
+            if (!on) { start = t; on = true; }
+          } else if (e.type === "Sub Out") {
+            if (on) {
+              seconds += intervalOverlapSeconds([start ?? 0, t], ballIntervals);
+              on = false;
+              start = null;
+            }
+          }
+        });
+        if (on) seconds += intervalOverlapSeconds([start ?? 0, finalTime], ballIntervals);
+        minutesByPlayer.set(key, (minutesByPlayer.get(key) || 0) + seconds / 60);
+      });
+    });
+    return minutesByPlayer;
+  }
+
+  function samuraiScoreForRow(r, metricSettings) {
+    const action = clean(r.actionName);
+    const actionId = clean(r.action);
+    const type = clean(r.ActionTypeName);
+    const result = clean(r.ActionResultName);
+    const q3 = clean(r.qualifier3Name || r.Qualifier3Name);
+    const q4 = clean(r.qualifier4Name || r.Qualifier4Name);
+    const q5 = clean(r.qualifier5Name || r.Qualifier5Name);
+    const q5Id = clean(r.qualifier5 || r.Qualifier5);
+    const isCarry = action === "Carry" || actionId === "1";
+    const isTackle = action === "Tackle" || actionId === "2";
+    const isMissedTackleAction = action === "Missed Tackle" || actionId === "12";
+    const isRuckOOA = action === "Ruck OOA" || actionId === "43";
+    const isAttackingQualities = action === "Attacking Qualities" || actionId === "10";
+    const isCollection = action === "Collection" || actionId === "18";
+    const isPass = action === "Pass" || actionId === "3";
+    const isKick = action === "Kick" || actionId === "4";
+    const isRestart = action === "Restart" || action === "Restart Kick" || actionId === "14";
+    const isGoalKick = action === "Goal Kick" || actionId === "11";
+    const isPenaltyConceded = action === "Penalty Conceded" || actionId === "7";
+    const isCard = action === "Card" || actionId === "21";
+    const isLineoutThrow = action === "Lineout Throw" || actionId === "6";
+    const isLineoutTake = action === "Lineout Take" || action === "Lineout Catch" || actionId === "27";
+    const isTurnover = action === "Turnover" || actionId === "8";
+    const isDefensiveAction = action === "Defensive Action" || actionId === "40";
+    const isFirstTackler = q5 === "1st Tackler" || q5Id === "708";
+    const includeTackle = metricSettings.tackleOrderFilter !== "first" || isFirstTackler;
+    const lower = (...vals) => vals.map(v => clean(v).toLowerCase()).join(" | ");
+    const text = lower(action, type, result, q3, q4, q5);
+    let positive = 0;
+    let negative = 0;
+
+    // Positive actions from the Samurai Stats definition sheet.
+    if (isCarry) positive += 1; // Ball Carry
+    if (isCarry && (result === "Tackled Dominant" || q4 === "Dominant Contact")) positive += 1;
+    if (isAttackingQualities && (result.includes("Line Break") || type === "Initial Break")) positive += 1;
+    if (isAttackingQualities && type === "Defender Beaten") positive += 1;
+    if (isPass && ["Complete", "Break", "Try"].includes(type)) positive += 1;
+    if (isPass && type === "Offload" && ["Own Player", "To Ground", ""].includes(result)) positive += 1;
+    if (isAttackingQualities && ["Break Assist", "Try Assist"].includes(type)) positive += 1;
+    if (isCollection && result === "Success") positive += 1;
+    if ((isCollection || isDefensiveAction) && text.includes("kick receipt") && result !== "Fail") positive += 1;
+    if (isCollection && type.includes("Loose Ball") && result !== "Fail") positive += 1;
+    if (text.includes("decoy")) positive += 1;
+    if (isAttackingQualities && type === "Snake") positive += 1;
+    if (isKick && q3.includes("Kick in Play")) positive += 1;
+    if ((isKick && result === "Own Player - Collected") || (isCollection && q4 === "Kicking Team" && result !== "Fail")) positive += 1;
+    if (isKick && (q4 === "50/22" || q4 === "22/50")) positive += 1;
+    if (isKick && q3 === "Penalty Kick" && result.includes("Kick in Touch")) positive += 1;
+    if (isRestart && result !== "Restart Own Error") positive += 1;
+    if (isGoalKick && result === "Goal Kicked") positive += 1;
+    if (isTackle && includeTackle && result !== "Missed") positive += 1;
+    if (isTackle && includeTackle && (q4 === "Dominant Tackle" || result === "Sack")) positive += 1;
+    if (isTackle && includeTackle && result === "Try Saver") positive += 1;
+    if (isTackle && includeTackle && result === "Turnover Won") positive += 1;
+    if (isRuckOOA && q4 === "Attacking OOA" && ["Secured", "Cleaned Out"].includes(type)) positive += 1;
+    if (isRuckOOA && q4 === "Defensive OOA" && ["Other Defensive Arrival", "Attended", "Penalty Won", "Turnover Won"].includes(type)) positive += 1;
+    if (isRuckOOA && q4 === "Defensive OOA" && ["Penalty Won", "Turnover Won"].includes(type)) positive += 1;
+    if (isTurnover && (type.includes("Won") || result.includes("Won"))) positive += 1;
+    if (isLineoutThrow && ["Won Clean", "Won Clean Catch", "Won Tap", "Won Tap (Scrappy)", "Won Penalty", "Won Free Kick", "Won Other"].includes(result)) positive += 1;
+    if (isLineoutThrow || isLineoutTake) positive += 1;
+
+    // Negative actions from the Samurai Stats definition sheet.
+    if (isCarry && result === "Error") negative += 1;
+    if (isTurnover || (isCarry && ["Error", "Tackled Ineffective"].includes(result))) negative += 1;
+    if (isCarry && (q4 === "Ineffective Contact" || result === "Tackled Ineffective")) negative += 1;
+    if (isPenaltyConceded || (isCarry && result === "Penalty Conceded") || (isTackle && includeTackle && result === "Pen Conceded") || (isRuckOOA && type === "Penalty Conceded")) negative += 1;
+    if ((isPenaltyConceded && result === "Yellow Card") || (isCard && text.includes("yellow card"))) negative += 1;
+    if (isPenaltyConceded && (q4 === "Free Kick" || text.includes("free kick") || text.includes("freekick"))) negative += 1;
+    if (isCard && text.includes("red card")) negative += 1;
+    if ((isPass && ["Incomplete", "Forward", "Off Target", "Intercepted", "Error"].includes(type)) || (isTurnover && type === "Bad Pass")) negative += 1;
+    if ((isCollection && result === "Fail") || (isTurnover && type === "Dropped Ball Unforced")) negative += 1;
+    if ((isKick && result.startsWith("Error")) || (isTurnover && type === "Kick Error")) negative += 1;
+    if (isGoalKick && result === "Goal Missed") negative += 1;
+    if (isKick && q3 === "Penalty Kick" && !result.includes("Kick in Touch")) negative += 1;
+    if ((isTackle && includeTackle && result === "Missed") || (metricSettings.includeMissedAction && isMissedTackleAction)) negative += 1;
+    if (isTackle && includeTackle && result === "Offload Allowed") negative += 1;
+    if (isTackle && includeTackle && result === "Passive") negative += 1;
+    if (isTackle && includeTackle && result === "Pen Conceded") negative += 1;
+    if (isRuckOOA && q4 === "Attacking OOA" && ["Failed Clearout", "Penalty Conceded"].includes(type)) negative += 1;
+    if (isRuckOOA && q4 === "Defensive OOA" && ["Failed Clearout", "Penalty Conceded"].includes(type)) negative += 1;
+
+    return { positive, negative };
+  }
+
   function applyMetricRow(p, r, metricSettings) {
     const action = clean(r.actionName);
     const actionId = clean(r.action);
@@ -1191,6 +1430,10 @@
       p.jackalAttempts += 1;
       if (metricSettings.jackalSuccessTypes.has(type)) p.jackalSuccess += 1;
     }
+
+    const samurai = samuraiScoreForRow(r, metricSettings);
+    p.samuraiPositive += samurai.positive;
+    p.samuraiNegative += samurai.negative;
   }
 
   function currentMetricSettings() {
@@ -1258,6 +1501,10 @@
     const minutesByPlayer = computePlayingMinutes(rows, sourceName);
     minutesByPlayer.forEach((minutes, key) => {
       if (players.has(key)) players.get(key).playingMinutes = minutes;
+    });
+    const bipMinutesByPlayer = computePlayingBipMinutes(rows, sourceName);
+    bipMinutesByPlayer.forEach((minutes, key) => {
+      if (players.has(key)) players.get(key).playingBipMinutes = minutes;
     });
 
     const sortedDates = [...dateValues].sort();
@@ -1406,12 +1653,13 @@
     const teams = new Set();
     let rowCount = 0;
     const numericFields = [
-      "playingMinutes",
+      "playingMinutes", "playingBipMinutes",
       "tackleAttempts", "tackleSuccess", "tackleMissed", "tackleDominant",
       "tacklePassive", "tackleOffloadAllowed", "tacklePenConceded", "tackleIneffective",
       "carryAttempts", "carries", "carryMetres", "carryGainline", "carryDominant", "carryDominantContact", "carryIneffectiveContact",
       "carryTries", "carryErrors", "postContactMetres",
-      "attackRuckOOAArrivals", "attackRuckOOASuccess", "jackalAttempts", "jackalSuccess"
+      "attackRuckOOAArrivals", "attackRuckOOASuccess", "jackalAttempts", "jackalSuccess",
+      "samuraiPositive", "samuraiNegative"
     ];
 
     function ensureCombined(fp) {
@@ -1458,11 +1706,20 @@
       const tackleAttempts = num(p.tackleAttempts);
       const attackRuckOOAArrivals = num(p.attackRuckOOAArrivals);
       const jackalAttempts = num(p.jackalAttempts);
+      const playingBipMinutes = num(p.playingBipMinutes);
+      const samuraiPositive = num(p.samuraiPositive);
+      const samuraiNegative = num(p.samuraiNegative);
+      const samuraiNet = samuraiPositive - samuraiNegative;
       return {
         ...p,
         carryAttempts,
         matchCount: p.matches instanceof Set ? p.matches.size : (p.matches || []).length,
         playingMinutes: num(p.playingMinutes),
+        playingBipMinutes,
+        samuraiPositive,
+        samuraiNegative,
+        samuraiNet,
+        samuraiStats: playingBipMinutes ? samuraiNet / playingBipMinutes : 0,
         tackleCompletionPct: tackleAttempts ? num(p.tackleSuccess) / tackleAttempts : 0,
         tackleSuccessPct: tackleAttempts ? num(p.tackleSuccess) / tackleAttempts : 0,
         tackleDominancePct: tackleAttempts ? num(p.tackleDominant) / tackleAttempts : 0,
@@ -1531,6 +1788,10 @@
     minutesByPlayer.forEach((minutes, key) => {
       if (players.has(key)) players.get(key).playingMinutes = minutes;
     });
+    const bipMinutesByPlayer = computePlayingBipMinutes(rows, "");
+    bipMinutesByPlayer.forEach((minutes, key) => {
+      if (players.has(key)) players.get(key).playingBipMinutes = minutes;
+    });
 
     state.reportRows = finalizeReportRows(players);
     renderSummary(rows, matches, teams);
@@ -1592,19 +1853,27 @@
       }
       return num(row.playingMinutes);
     }
+    if (key === "playingBipMinutes") {
+      if (statMode() === "perGame") {
+        const games = num(row.matchCount);
+        return games ? num(row.playingBipMinutes) / games : 0;
+      }
+      return num(row.playingBipMinutes);
+    }
     if (scalableKeys.has(key)) return scaledMetric(row[key], row);
     return row[key];
   }
 
   function displayType(key, type) {
     if (pctKeys.has(key)) return type;
-    if (statMode() !== "total" && (scalableKeys.has(key) || key === "playingMinutes")) return "num1";
+    if (statMode() !== "total" && (scalableKeys.has(key) || key === "playingMinutes" || key === "playingBipMinutes")) return "num1";
     return type;
   }
 
   function displayLabel(key, label) {
     const mode = statMode();
     if (mode === "perGame" && key === "playingMinutes") return "Playing Minutes / Game";
+    if (mode === "perGame" && key === "playingBipMinutes") return "Playing BIP Minutes / Game";
     if (scalableKeys.has(key)) return `${label}${modeSuffix()}`;
     return label;
   }
@@ -1631,13 +1900,19 @@
     const ooaSucc = state.reportRows.reduce((s, p) => s + num(p.attackRuckOOASuccess), 0);
     const jackal = state.reportRows.reduce((s, p) => s + num(p.jackalAttempts), 0);
     const jackalSucc = state.reportRows.reduce((s, p) => s + num(p.jackalSuccess), 0);
+    const playingBipMinutes = state.reportRows.reduce((s, p) => s + num(p.playingBipMinutes), 0);
+    const samuraiPositive = state.reportRows.reduce((s, p) => s + num(p.samuraiPositive), 0);
+    const samuraiNegative = state.reportRows.reduce((s, p) => s + num(p.samuraiNegative), 0);
+    const samuraiNet = samuraiPositive - samuraiNegative;
     const suffix = modeSuffix();
     const playingMinutesLabel = statMode() === "perGame" ? "Playing Minutes / Game" : "Playing Minutes";
     const playingMinutesValue = statMode() === "perGame" && matchCount ? playingMinutes / matchCount : playingMinutes;
+    const samuraiStats = playingBipMinutes ? samuraiNet / playingBipMinutes : 0;
     el("summary").innerHTML = [
       [matchCount, "試合数"],
       [teams.size, "チーム数"],
       [fmt(playingMinutesValue, 1), playingMinutesLabel],
+      [fmt(samuraiStats, 3), "Samurai Stats"],
       [fmt(summaryScaled(tAtt, playingMinutes, matchCount), statMode() === "total" ? 0 : 1), `1st Tackle Attempt${suffix}`],
       [pct(tSucc, tAtt), "1st Tackle Completion%"],
       [pct(tDom, tAtt), "1st Tackle Dominance%"],
@@ -1666,6 +1941,7 @@
     ["position", "Position", "text"],
     ["matchCount", "Matches", "num"],
     ["playingMinutes", "Playing Minutes", "num1"],
+    ["samuraiStats", "Samurai Stats", "num3"],
     ["tackleAttempts", "1st Tackle Attempt", "num"],
     ["tackleCompletionPct", "1st Tackle Completion%", "pctbar"],
     ["tackleDominancePct", "1st Tackle Dominance%", "pctbar"],
@@ -1723,6 +1999,7 @@
   function cell(v, type) {
     if (type === "num") return `<td class="num">${fmt(num(v), 0)}</td>`;
     if (type === "num1") return `<td class="num">${fmt(num(v), 1)}</td>`;
+    if (type === "num3") return `<td class="num">${fmt(num(v), 3)}</td>`;
     if (type === "pctbar") {
       const p = Math.max(0, Math.min(1, num(v)));
       return `<td class="num"><span class="bar"><span style="width:${p * 100}%"></span></span>${fmt(p * 100, 1)}%</td>`;
@@ -1798,6 +2075,7 @@
     clearFilterOptions();
     el("tableWrap").innerHTML = `<div class="empty">DropboxフォルダまたはローカルCSVを読み込むと、ここに選手別集計が表示されます。</div>`;
     el("downloadSummary").disabled = true;
+    setDropboxProgress({ visible: false });
   }
 
   function clearData() {
