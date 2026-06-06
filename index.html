@@ -1,0 +1,896 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Rugby Dropbox CSV Player Report</title>
+  <style>
+    :root {
+      --bg: #f6f7fb;
+      --panel: #ffffff;
+      --ink: #1d2433;
+      --muted: #667085;
+      --line: #d9dee8;
+      --accent: #184e77;
+      --accent-soft: #e8f2f8;
+      --good: #0f7b45;
+      --warn: #9a6700;
+      --bad: #b42318;
+      --shadow: 0 8px 24px rgba(16,24,40,.08);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--ink);
+      background: var(--bg);
+      line-height: 1.5;
+    }
+    header {
+      background: linear-gradient(135deg, #12355b, #184e77);
+      color: #fff;
+      padding: 28px 24px;
+    }
+    header h1 { margin: 0 0 6px; font-size: clamp(24px, 4vw, 36px); }
+    header p { margin: 0; opacity: .88; }
+    main { max-width: 1240px; margin: 0 auto; padding: 24px; }
+    .grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 16px; }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      box-shadow: var(--shadow);
+      padding: 18px;
+    }
+    .span-12 { grid-column: span 12; }
+    .span-8 { grid-column: span 8; }
+    .span-4 { grid-column: span 4; }
+    .span-3 { grid-column: span 3; }
+    @media (max-width: 900px) { .span-8, .span-4, .span-3 { grid-column: span 12; } }
+    h2 { margin: 0 0 12px; font-size: 18px; }
+    h3 { margin: 20px 0 8px; font-size: 15px; }
+    label { display: block; font-weight: 650; margin: 10px 0 6px; }
+    input[type="file"], input[type="text"], input[type="password"], textarea, select {
+      width: 100%;
+      border: 1px solid #cfd5df;
+      border-radius: 10px;
+      padding: 10px 12px;
+      background: #fff;
+      color: var(--ink);
+      font: inherit;
+    }
+    textarea { min-height: 86px; resize: vertical; }
+    .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .row > * { flex: 1; }
+    .row .fit { flex: 0 0 auto; }
+    button {
+      border: 0;
+      border-radius: 10px;
+      padding: 10px 14px;
+      background: var(--accent);
+      color: white;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    button.secondary { background: #344054; }
+    button.ghost { background: #eef2f6; color: #24364b; border: 1px solid #d5dbe5; }
+    button.danger { background: #b42318; }
+    button:disabled { opacity: .55; cursor: not-allowed; }
+    .hint, .small { color: var(--muted); font-size: 13px; }
+    .note {
+      background: #fff8e6;
+      border: 1px solid #f2d483;
+      color: #5f4700;
+      padding: 10px 12px;
+      border-radius: 10px;
+      font-size: 13px;
+      margin-top: 10px;
+    }
+    .ok {
+      background: #eefaf4;
+      border: 1px solid #b8e6cd;
+      color: #0f5132;
+      padding: 10px 12px;
+      border-radius: 10px;
+      font-size: 13px;
+      margin-top: 10px;
+    }
+    .bad {
+      background: #fff1f0;
+      border: 1px solid #f5b6b2;
+      color: #7a271a;
+      padding: 10px 12px;
+      border-radius: 10px;
+      font-size: 13px;
+      margin-top: 10px;
+    }
+    .kpi { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+    @media (max-width: 760px) { .kpi { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    .kpi .box {
+      background: #fbfcfe;
+      border: 1px solid #e4e8f0;
+      border-radius: 12px;
+      padding: 13px;
+    }
+    .kpi .num { font-size: 26px; line-height: 1.1; font-weight: 800; }
+    .kpi .label { color: var(--muted); font-size: 12px; margin-top: 4px; }
+    .pill {
+      display: inline-block;
+      border-radius: 999px;
+      padding: 3px 9px;
+      background: var(--accent-soft);
+      color: #12355b;
+      font-size: 12px;
+      font-weight: 700;
+      margin: 3px 4px 3px 0;
+    }
+    .table-wrap { overflow: auto; max-height: 72vh; border: 1px solid var(--line); border-radius: 12px; }
+    table { border-collapse: separate; border-spacing: 0; width: 100%; background: #fff; font-size: 13px; }
+    th, td { padding: 9px 10px; border-bottom: 1px solid #edf0f5; white-space: nowrap; }
+    th {
+      position: sticky; top: 0; z-index: 2;
+      background: #f1f5f9;
+      color: #233044;
+      text-align: left;
+      font-size: 12px;
+      cursor: pointer;
+      user-select: none;
+    }
+    td.num, th.num { text-align: right; }
+    tbody tr:hover { background: #f8fbfd; }
+    .right { text-align: right; }
+    .status { margin-top: 10px; font-size: 13px; color: var(--muted); min-height: 20px; white-space: pre-wrap; }
+    .bar {
+      display: inline-block;
+      width: 70px;
+      height: 8px;
+      background: #edf0f5;
+      border-radius: 999px;
+      overflow: hidden;
+      vertical-align: middle;
+      margin-right: 6px;
+    }
+    .bar > span { display: block; height: 100%; background: var(--accent); }
+    details { margin-top: 10px; }
+    summary { cursor: pointer; color: var(--accent); font-weight: 700; }
+    .checkbox-line { display:flex; align-items:center; gap:8px; margin-top:8px; }
+    .checkbox-line input { width:auto; }
+    .checkbox-line label { margin:0; }
+    .empty { padding: 24px; text-align: center; color: var(--muted); }
+    code { background:#eef2f6; padding:2px 5px; border-radius:5px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Rugby Dropbox CSV Player Report</h1>
+    <p>Dropboxフォルダ内のCSVを自動取得し、選手別のCarry数・Tackle成功率を集計します。</p>
+  </header>
+
+  <main>
+    <section class="grid">
+      <div class="card span-8">
+        <h2>Dropboxフォルダ自動読み込み</h2>
+        <p class="hint">初回だけDropbox認証が必要です。認証後は、このブラウザに保存された設定でページ表示時にフォルダ内CSVを自動集計します。</p>
+
+        <div id="authState" class="note">Dropbox接続状態を確認中...</div>
+
+        <label>Dropbox App Key</label>
+        <input id="dropboxAppKey" type="text" placeholder="Dropbox App Console の App key">
+
+        <label>Dropboxフォルダパス</label>
+        <input id="dropboxFolderPath" type="text" placeholder="例: /reports または /2026/matches">
+        <p class="hint">App Folder権限のアプリなら、そのアプリフォルダ内の相対パスを指定します。ルートは空欄です。</p>
+
+        <div class="checkbox-line">
+          <input id="recursiveFolder" type="checkbox" checked>
+          <label for="recursiveFolder">サブフォルダ内のCSVも含める</label>
+        </div>
+        <div class="checkbox-line">
+          <input id="autoLoadDropbox" type="checkbox" checked>
+          <label for="autoLoadDropbox">認証済みならページ表示時に自動読み込み</label>
+        </div>
+
+        <div class="row" style="margin-top:12px">
+          <button id="saveDropboxSettings" class="fit">設定を保存</button>
+          <button id="connectDropbox" class="secondary fit">Dropboxに接続</button>
+          <button id="loadDropboxFolder" class="fit">今すぐ読み込み</button>
+          <button id="disconnectDropbox" class="danger fit">接続解除</button>
+        </div>
+
+        <details>
+          <summary>Dropbox App Consoleで必要な設定</summary>
+          <ol class="hint">
+            <li>Dropbox APIアプリを作成</li>
+            <li>既存の通常フォルダを読むなら <code>Full Dropbox</code>、アプリ専用フォルダでよければ <code>App Folder</code></li>
+            <li>Permissionsで <code>files.metadata.read</code> と <code>files.content.read</code> を有効化</li>
+            <li>Redirect URIに下記を完全一致で登録</li>
+          </ol>
+          <input id="redirectUri" type="text" readonly>
+          <p class="hint"><code>file://</code> で直接開くとOAuthリダイレクトに使えない場合があります。GitHub PagesなどのHTTPS、またはローカルHTTPサーバーで開いてください。</p>
+        </details>
+
+        <div id="dropboxStatus" class="status"></div>
+      </div>
+
+      <div class="card span-4">
+        <h2>集計設定</h2>
+        <label>タックル成功に含める ActionResultName</label>
+        <input id="successResults" type="text" value="Complete, Passive, Sack, Turnover Won, Forced in Touch">
+        <div class="checkbox-line">
+          <input id="dedupeRows" type="checkbox" checked>
+          <label for="dedupeRows">同じ FXID + ID の重複行を除外</label>
+        </div>
+        <div class="checkbox-line">
+          <input id="includeMissedAction" type="checkbox">
+          <label for="includeMissedAction">actionName = Missed Tackle を分母に追加</label>
+        </div>
+        <p class="hint">サンプルCSVでは <code>Tackle / Missed</code> と <code>Missed Tackle</code> が対応しているため、通常は追加しない方が安全です。</p>
+
+        <details>
+          <summary>ローカルCSVで確認する</summary>
+          <label>ローカルCSVファイル</label>
+          <input id="csvFiles" type="file" accept=".csv,text/csv" multiple>
+          <div class="row" style="margin-top:10px">
+            <button id="loadLocal" class="fit">ローカルCSVを集計</button>
+            <button id="clearData" class="ghost fit">クリア</button>
+          </div>
+        </details>
+      </div>
+
+      <div class="card span-12">
+        <h2>全体サマリー</h2>
+        <div id="summary" class="kpi"></div>
+        <div id="fileList" style="margin-top:12px"></div>
+        <div id="matchList" style="margin-top:12px"></div>
+      </div>
+
+      <div class="card span-12">
+        <div class="row">
+          <div>
+            <h2>選手別レポート</h2>
+            <p class="hint" style="margin-top:-4px">ヘッダーをクリックすると並び替えできます。</p>
+          </div>
+          <input id="filterText" type="text" placeholder="選手名・チーム名で絞り込み">
+          <select id="teamFilter"><option value="">全チーム</option></select>
+          <button id="downloadSummary" class="secondary fit" disabled>集計CSVを書き出し</button>
+        </div>
+        <div class="table-wrap" id="tableWrap">
+          <div class="empty">DropboxフォルダまたはローカルCSVを読み込むと、ここに選手別集計が表示されます。</div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+<script>
+(() => {
+  const STORAGE = {
+    appKey: "rugbyDropboxAppKey",
+    folderPath: "rugbyDropboxFolderPath",
+    recursive: "rugbyDropboxRecursive",
+    autoLoad: "rugbyDropboxAutoLoad",
+    token: "rugbyDropboxAccessToken",
+    expiresAt: "rugbyDropboxExpiresAt"
+  };
+
+  const state = {
+    rawRows: [],
+    sourceNames: [],
+    reportRows: [],
+    sortKey: "carries",
+    sortDir: "desc",
+    loadedCsvPaths: []
+  };
+
+  const el = id => document.getElementById(id);
+  const status = msg => { el("dropboxStatus").textContent = msg || ""; };
+  const clean = v => (v == null ? "" : String(v).trim());
+  const esc = v => clean(v).replace(/[&<>"]/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[ch]));
+  const num = v => {
+    if (v == null || v === "") return 0;
+    const n = Number(String(v).replace(/,/g, ""));
+    return Number.isFinite(n) ? n : 0;
+  };
+  const fmt = (v, digits = 0) => Number.isFinite(v) ? v.toLocaleString("ja-JP", { maximumFractionDigits: digits, minimumFractionDigits: digits }) : "";
+  const pct = (part, total) => total ? `${fmt(part / total * 100, 1)}%` : "-";
+
+  function redirectUri() {
+    return window.location.origin + window.location.pathname;
+  }
+
+  function saveDropboxSettings() {
+    localStorage.setItem(STORAGE.appKey, clean(el("dropboxAppKey").value));
+    localStorage.setItem(STORAGE.folderPath, clean(el("dropboxFolderPath").value));
+    localStorage.setItem(STORAGE.recursive, el("recursiveFolder").checked ? "1" : "0");
+    localStorage.setItem(STORAGE.autoLoad, el("autoLoadDropbox").checked ? "1" : "0");
+    updateAuthState("Dropbox設定を保存しました。");
+  }
+
+  function loadDropboxSettings() {
+    el("dropboxAppKey").value = localStorage.getItem(STORAGE.appKey) || "";
+    el("dropboxFolderPath").value = localStorage.getItem(STORAGE.folderPath) || "";
+    el("recursiveFolder").checked = (localStorage.getItem(STORAGE.recursive) ?? "1") === "1";
+    el("autoLoadDropbox").checked = (localStorage.getItem(STORAGE.autoLoad) ?? "1") === "1";
+    el("redirectUri").value = redirectUri();
+  }
+
+  function tokenIsValid() {
+    const token = localStorage.getItem(STORAGE.token);
+    const expiresAt = Number(localStorage.getItem(STORAGE.expiresAt) || 0);
+    return !!token && Date.now() < expiresAt;
+  }
+
+  function updateAuthState(extraMessage = "") {
+    const appKey = clean(el("dropboxAppKey").value);
+    const folderPath = clean(el("dropboxFolderPath").value);
+    const expiresAt = Number(localStorage.getItem(STORAGE.expiresAt) || 0);
+    const uri = redirectUri();
+    let html = "";
+    if (uri.startsWith("file://")) {
+      html += `<div class="bad">このHTMLは <code>file://</code> で開かれています。Dropbox OAuthを使うには、HTTPSまたはlocalhostのURLで開いてください。</div>`;
+    }
+    if (!appKey) {
+      html += `<div class="note">Dropbox App Keyを入力して設定を保存してください。</div>`;
+    } else if (tokenIsValid()) {
+      const until = new Date(expiresAt).toLocaleString("ja-JP");
+      html += `<div class="ok">Dropbox接続済み。トークン有効期限: ${esc(until)}</div>`;
+    } else if (localStorage.getItem(STORAGE.token)) {
+      html += `<div class="note">Dropboxトークンの期限が切れています。もう一度「Dropboxに接続」を押してください。</div>`;
+    } else {
+      html += `<div class="note">未接続です。「Dropboxに接続」で初回認証してください。</div>`;
+    }
+    if (!folderPath) {
+      html += `<div class="note">フォルダパスが空欄です。App Folderのルートを読む場合は空欄のままでOKです。</div>`;
+    }
+    if (extraMessage) html += `<div class="ok">${esc(extraMessage)}</div>`;
+    el("authState").innerHTML = html;
+  }
+
+  function base64UrlEncode(bytes) {
+    let binary = "";
+    bytes.forEach(b => binary += String.fromCharCode(b));
+    return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  }
+
+  async function sha256Base64Url(text) {
+    const data = new TextEncoder().encode(text);
+    const digest = await crypto.subtle.digest("SHA-256", data);
+    return base64UrlEncode(new Uint8Array(digest));
+  }
+
+  function randomVerifier() {
+    const bytes = new Uint8Array(64);
+    crypto.getRandomValues(bytes);
+    return base64UrlEncode(bytes);
+  }
+
+  async function connectDropbox() {
+    saveDropboxSettings();
+    const appKey = clean(el("dropboxAppKey").value);
+    if (!appKey) throw new Error("Dropbox App Keyを入力してください。");
+    if (redirectUri().startsWith("file://")) throw new Error("file:// ではDropbox OAuthリダイレクトを利用できません。HTTPSまたはlocalhostで開いてください。");
+
+    const verifier = randomVerifier();
+    const challenge = await sha256Base64Url(verifier);
+    const stateValue = randomVerifier().slice(0, 32);
+    sessionStorage.setItem("dropboxPkceVerifier", verifier);
+    sessionStorage.setItem("dropboxOauthState", stateValue);
+
+    const params = new URLSearchParams({
+      client_id: appKey,
+      response_type: "code",
+      redirect_uri: redirectUri(),
+      code_challenge_method: "S256",
+      code_challenge: challenge,
+      token_access_type: "online",
+      state: stateValue,
+      scope: "files.metadata.read files.content.read"
+    });
+    window.location.href = `https://www.dropbox.com/oauth2/authorize?${params.toString()}`;
+  }
+
+  async function handleOAuthCallback() {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get("code");
+    if (!code) return false;
+
+    const returnedState = params.get("state") || "";
+    const expectedState = sessionStorage.getItem("dropboxOauthState") || "";
+    if (!expectedState || returnedState !== expectedState) {
+      throw new Error("OAuth stateが一致しません。もう一度Dropbox接続をやり直してください。");
+    }
+
+    const appKey = localStorage.getItem(STORAGE.appKey) || clean(el("dropboxAppKey").value);
+    const verifier = sessionStorage.getItem("dropboxPkceVerifier");
+    if (!appKey || !verifier) throw new Error("OAuth認証情報が見つかりません。もう一度Dropbox接続をやり直してください。");
+
+    status("Dropbox認証コードをアクセストークンに交換中...");
+    const body = new URLSearchParams({
+      code,
+      grant_type: "authorization_code",
+      client_id: appKey,
+      redirect_uri: redirectUri(),
+      code_verifier: verifier
+    });
+
+    const res = await fetch("https://api.dropboxapi.com/oauth2/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body
+    });
+    if (!res.ok) throw new Error(`Dropbox OAuth token error ${res.status}: ${await res.text()}`);
+    const tokenData = await res.json();
+    localStorage.setItem(STORAGE.token, tokenData.access_token);
+    const expiresIn = Number(tokenData.expires_in || 14400);
+    localStorage.setItem(STORAGE.expiresAt, String(Date.now() + expiresIn * 1000 - 60000));
+    sessionStorage.removeItem("dropboxPkceVerifier");
+    sessionStorage.removeItem("dropboxOauthState");
+
+    window.history.replaceState({}, document.title, redirectUri());
+    updateAuthState("Dropbox認証が完了しました。");
+    return true;
+  }
+
+  function getDropboxToken() {
+    if (!tokenIsValid()) {
+      throw new Error("Dropboxトークンが未設定または期限切れです。「Dropboxに接続」を押してください。");
+    }
+    return localStorage.getItem(STORAGE.token);
+  }
+
+  function normalizeDropboxPath(path) {
+    path = clean(path);
+    if (path === "/") return "";
+    return path;
+  }
+
+  async function dropboxRpc(endpoint, body) {
+    const token = getDropboxToken();
+    const res = await fetch(`https://api.dropboxapi.com/2/${endpoint}`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(body)
+    });
+    if (res.status === 401) {
+      localStorage.removeItem(STORAGE.token);
+      localStorage.removeItem(STORAGE.expiresAt);
+      updateAuthState();
+      throw new Error("Dropboxトークンが無効または期限切れです。再接続してください。");
+    }
+    if (!res.ok) throw new Error(`Dropbox API error ${res.status}: ${await res.text()}`);
+    return res.json();
+  }
+
+  async function listCsvFilesInFolder() {
+    const folderPath = normalizeDropboxPath(el("dropboxFolderPath").value);
+    const recursive = el("recursiveFolder").checked;
+    const entries = [];
+    let result = await dropboxRpc("files/list_folder", {
+      path: folderPath,
+      recursive,
+      include_deleted: false,
+      include_mounted_folders: true,
+      include_non_downloadable_files: false,
+      limit: 2000
+    });
+    entries.push(...(result.entries || []));
+    while (result.has_more) {
+      result = await dropboxRpc("files/list_folder/continue", { cursor: result.cursor });
+      entries.push(...(result.entries || []));
+    }
+    return entries
+      .filter(e => e[".tag"] === "file")
+      .filter(e => clean(e.name).toLowerCase().endsWith(".csv"))
+      .sort((a, b) => clean(a.path_display || a.path_lower).localeCompare(clean(b.path_display || b.path_lower), "ja"));
+  }
+
+  async function downloadDropboxFile(path) {
+    const token = getDropboxToken();
+    const res = await fetch("https://content.dropboxapi.com/2/files/download", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Dropbox-API-Arg": JSON.stringify({ path })
+      }
+    });
+    if (res.status === 401) {
+      localStorage.removeItem(STORAGE.token);
+      localStorage.removeItem(STORAGE.expiresAt);
+      updateAuthState();
+      throw new Error("Dropboxトークンが無効または期限切れです。再接続してください。");
+    }
+    if (!res.ok) throw new Error(`${path}: Dropbox download error ${res.status}: ${await res.text()}`);
+    return res.text();
+  }
+
+  async function loadDropboxFolder() {
+    saveDropboxSettings();
+    state.rawRows = [];
+    state.sourceNames = [];
+    state.loadedCsvPaths = [];
+    clearReportOnly();
+
+    status("Dropboxフォルダ内のCSV一覧を取得中...");
+    const files = await listCsvFilesInFolder();
+    if (!files.length) throw new Error("指定フォルダ内にCSVファイルが見つかりませんでした。");
+
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i];
+      const path = f.path_lower || f.path_display;
+      status(`CSVを読み込み中 (${i + 1}/${files.length})\n${path}`);
+      const text = await downloadDropboxFile(path);
+      const rows = parseCSV(text);
+      loadRows(rows, f.path_display || path);
+      state.loadedCsvPaths.push(f.path_display || path);
+    }
+
+    buildReport();
+    status(`Dropboxフォルダから${files.length}ファイル、${state.rawRows.length.toLocaleString("ja-JP")}行を読み込みました。`);
+  }
+
+  function disconnectDropbox() {
+    localStorage.removeItem(STORAGE.token);
+    localStorage.removeItem(STORAGE.expiresAt);
+    updateAuthState("このブラウザからDropbox接続情報を削除しました。");
+    status("");
+  }
+
+  function parseCSV(text) {
+    text = text.replace(/^\uFEFF/, "");
+    const rows = [];
+    let row = [];
+    let field = "";
+    let inQuotes = false;
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      const n = text[i + 1];
+      if (inQuotes) {
+        if (c === '"' && n === '"') { field += '"'; i++; }
+        else if (c === '"') { inQuotes = false; }
+        else { field += c; }
+      } else {
+        if (c === '"') inQuotes = true;
+        else if (c === ',') { row.push(field); field = ""; }
+        else if (c === '\n') { row.push(field); rows.push(row); row = []; field = ""; }
+        else if (c === '\r') { /* ignore */ }
+        else { field += c; }
+      }
+    }
+    if (field.length || row.length) { row.push(field); rows.push(row); }
+    if (!rows.length) return [];
+    const headers = rows.shift().map(h => clean(h));
+    return rows
+      .filter(r => r.some(cell => clean(cell) !== ""))
+      .map(r => {
+        const obj = {};
+        headers.forEach((h, i) => { obj[h || `col_${i + 1}`] = r[i] ?? ""; });
+        return obj;
+      });
+  }
+
+  function getSuccessSet() {
+    return new Set(el("successResults").value.split(",").map(s => clean(s)).filter(Boolean));
+  }
+
+  function rowKey(r) {
+    const fx = clean(r.FXID || r.match_id || r.MatchID);
+    const id = clean(r.ID || r.event_id || r.EventID);
+    return fx && id ? `${fx}|${id}` : "";
+  }
+
+  function loadRows(rows, sourceName) {
+    rows.forEach(r => {
+      r.__source = sourceName;
+      state.rawRows.push(r);
+    });
+    state.sourceNames.push(sourceName);
+  }
+
+  function buildReport() {
+    let rows = state.rawRows.slice();
+    if (el("dedupeRows").checked) {
+      const seen = new Set();
+      rows = rows.filter(r => {
+        const k = rowKey(r);
+        if (!k) return true;
+        if (seen.has(k)) return false;
+        seen.add(k);
+        return true;
+      });
+    }
+
+    const successResults = getSuccessSet();
+    const includeMissedAction = el("includeMissedAction").checked;
+    const players = new Map();
+    const matches = new Map();
+    const teams = new Set();
+
+    function playerKey(r) {
+      const id = clean(r.PLID || r.player_id || "");
+      const player = clean(r.playerName || r.player || "不明");
+      const team = clean(r.teamName || r.team || "不明");
+      return `${id}|${player}|${team}`;
+    }
+    function ensurePlayer(r) {
+      const key = playerKey(r);
+      if (!players.has(key)) {
+        players.set(key, {
+          playerId: clean(r.PLID),
+          playerName: clean(r.playerName) || "不明",
+          teamName: clean(r.teamName) || "不明",
+          shirt: clean(r.playerShirtNumber),
+          position: clean(r.playerpositionName),
+          matches: new Set(),
+          carries: 0,
+          carryMetres: 0,
+          carryGainline: 0,
+          carryDominantContact: 0,
+          carryIneffectiveContact: 0,
+          carryTries: 0,
+          carryErrors: 0,
+          tackleAttempts: 0,
+          tackleSuccess: 0,
+          tackleMissed: 0,
+          tackleDominant: 0,
+          tacklePassive: 0,
+          tackleOffloadAllowed: 0,
+          tacklePenConceded: 0,
+          tackleIneffective: 0
+        });
+      }
+      return players.get(key);
+    }
+
+    rows.forEach(r => {
+      const fxid = clean(r.FXID || r.match_id || r.MatchID);
+      const matchLabel = `${fxid || clean(r.__source) || "unknown"} ${clean(r.datePlayed)} ${clean(r.homeTeamName)} vs ${clean(r.awayTeamName)}`.trim();
+      if (fxid || clean(r.__source)) matches.set(fxid || clean(r.__source), matchLabel);
+      const team = clean(r.teamName);
+      if (team) teams.add(team);
+
+      if (!clean(r.playerName)) return;
+      const p = ensurePlayer(r);
+      if (fxid || clean(r.__source)) p.matches.add(fxid || clean(r.__source));
+
+      const action = clean(r.actionName);
+      const result = clean(r.ActionResultName);
+      const q3 = clean(r.qualifier3Name);
+      const q4 = clean(r.qualifier4Name);
+
+      if (action === "Carry") {
+        p.carries += 1;
+        p.carryMetres += num(r.Metres);
+        if (q3 === "Crossed Gain line") p.carryGainline += 1;
+        if (q4 === "Dominant Contact") p.carryDominantContact += 1;
+        if (q4 === "Ineffective Contact") p.carryIneffectiveContact += 1;
+        if (result === "Try Scored") p.carryTries += 1;
+        if (result === "Error" || result === "Penalty Conceded") p.carryErrors += 1;
+      }
+
+      if (action === "Tackle") {
+        p.tackleAttempts += 1;
+        if (successResults.has(result)) p.tackleSuccess += 1;
+        if (result === "Missed") p.tackleMissed += 1;
+        if (result === "Passive") p.tacklePassive += 1;
+        if (result === "Offload Allowed") p.tackleOffloadAllowed += 1;
+        if (result === "Pen Conceded") p.tacklePenConceded += 1;
+        if (result === "Ineffective") p.tackleIneffective += 1;
+        if (q4 === "Dominant Tackle") p.tackleDominant += 1;
+      }
+
+      if (includeMissedAction && action === "Missed Tackle") {
+        p.tackleAttempts += 1;
+        p.tackleMissed += 1;
+      }
+    });
+
+    state.reportRows = [...players.values()].map(p => ({
+      ...p,
+      matchCount: p.matches.size,
+      metresPerCarry: p.carries ? p.carryMetres / p.carries : 0,
+      gainlinePct: p.carries ? p.carryGainline / p.carries : 0,
+      tackleSuccessPct: p.tackleAttempts ? p.tackleSuccess / p.tackleAttempts : 0,
+      dominantTacklePct: p.tackleAttempts ? p.tackleDominant / p.tackleAttempts : 0
+    }));
+
+    renderSummary(rows, matches, teams);
+    renderTeamFilter([...teams].sort());
+    renderTable();
+    el("downloadSummary").disabled = state.reportRows.length === 0;
+  }
+
+  function renderSummary(rows, matches, teams) {
+    const totalCarries = state.reportRows.reduce((s, p) => s + p.carries, 0);
+    const carryMetres = state.reportRows.reduce((s, p) => s + p.carryMetres, 0);
+    const tAtt = state.reportRows.reduce((s, p) => s + p.tackleAttempts, 0);
+    const tSucc = state.reportRows.reduce((s, p) => s + p.tackleSuccess, 0);
+    el("summary").innerHTML = [
+      [matches.size, "試合数"],
+      [teams.size, "チーム数"],
+      [totalCarries, "Carry数"],
+      [fmt(carryMetres), "Carryメートル"],
+      [tAtt, "Tackle試行"],
+      [pct(tSucc, tAtt), "Tackle成功率"],
+      [rows.length.toLocaleString("ja-JP"), "読み込み行数"],
+      [state.reportRows.length, "選手数"]
+    ].map(([n, label]) => `<div class="box"><div class="num">${n}</div><div class="label">${label}</div></div>`).join("");
+
+    const fileHtml = state.loadedCsvPaths.slice(0, 24).map(p => `<span class="pill">${esc(p)}</span>`).join("");
+    const more = state.loadedCsvPaths.length > 24 ? `<span class="pill">ほか ${state.loadedCsvPaths.length - 24} ファイル</span>` : "";
+    el("fileList").innerHTML = fileHtml ? `<div class="hint">読み込んだCSV</div>${fileHtml}${more}` : "";
+
+    const matchHtml = [...matches.values()].slice(0, 12).map(m => `<span class="pill">${esc(m)}</span>`).join("");
+    el("matchList").innerHTML = matchHtml || `<span class="hint">試合情報がまだありません。</span>`;
+  }
+
+  function renderTeamFilter(teams) {
+    const current = el("teamFilter").value;
+    el("teamFilter").innerHTML = `<option value="">全チーム</option>` + teams.map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join("");
+    if (teams.includes(current)) el("teamFilter").value = current;
+  }
+
+  const columns = [
+    ["teamName", "Team", "text"],
+    ["playerName", "Player", "text"],
+    ["shirt", "No", "num"],
+    ["position", "Position", "text"],
+    ["matchCount", "Matches", "num"],
+    ["carries", "Carry", "num"],
+    ["carryMetres", "Carry m", "num"],
+    ["metresPerCarry", "m/Carry", "num1"],
+    ["gainlinePct", "Gainline %", "pctbar"],
+    ["carryTries", "Carry Try", "num"],
+    ["carryErrors", "Carry Error/Pen", "num"],
+    ["tackleAttempts", "Tackle", "num"],
+    ["tackleSuccess", "Tackle成功", "num"],
+    ["tackleSuccessPct", "Tackle成功率", "pctbar"],
+    ["tackleMissed", "Missed", "num"],
+    ["tackleDominant", "Dominant T", "num"],
+    ["tackleOffloadAllowed", "Offload Allowed", "num"],
+    ["tacklePenConceded", "Pen Conceded", "num"]
+  ];
+
+  function filteredRows() {
+    const q = clean(el("filterText").value).toLowerCase();
+    const team = el("teamFilter").value;
+    return state.reportRows.filter(r => {
+      if (team && r.teamName !== team) return false;
+      if (q && !(r.playerName.toLowerCase().includes(q) || r.teamName.toLowerCase().includes(q))) return false;
+      return true;
+    });
+  }
+
+  function compare(a, b, key) {
+    const av = a[key], bv = b[key];
+    if (typeof av === "number" || typeof bv === "number") return (num(av) - num(bv));
+    return clean(av).localeCompare(clean(bv), "ja");
+  }
+
+  function renderTable() {
+    const rows = filteredRows().sort((a, b) => {
+      const c = compare(a, b, state.sortKey);
+      return state.sortDir === "asc" ? c : -c;
+    });
+    if (!rows.length) {
+      el("tableWrap").innerHTML = `<div class="empty">該当する選手がありません。</div>`;
+      return;
+    }
+    const head = `<thead><tr>${columns.map(([key, label, type]) => {
+      const arrow = state.sortKey === key ? (state.sortDir === "asc" ? " ▲" : " ▼") : "";
+      return `<th data-key="${key}" class="${type.startsWith("num") ? "num" : ""}">${label}${arrow}</th>`;
+    }).join("")}</tr></thead>`;
+    const body = `<tbody>${rows.map(r => `<tr>${columns.map(([key, label, type]) => cell(r[key], type)).join("")}</tr>`).join("")}</tbody>`;
+    el("tableWrap").innerHTML = `<table>${head}${body}</table>`;
+    el("tableWrap").querySelectorAll("th").forEach(th => {
+      th.addEventListener("click", () => {
+        const key = th.dataset.key;
+        if (state.sortKey === key) state.sortDir = state.sortDir === "asc" ? "desc" : "asc";
+        else { state.sortKey = key; state.sortDir = "desc"; }
+        renderTable();
+      });
+    });
+  }
+
+  function cell(v, type) {
+    if (type === "num") return `<td class="num">${fmt(num(v), 0)}</td>`;
+    if (type === "num1") return `<td class="num">${fmt(num(v), 1)}</td>`;
+    if (type === "pctbar") {
+      const p = Math.max(0, Math.min(1, num(v)));
+      return `<td class="num"><span class="bar"><span style="width:${p * 100}%"></span></span>${fmt(p * 100, 1)}%</td>`;
+    }
+    return `<td>${esc(v)}</td>`;
+  }
+
+  async function readFiles(files) {
+    if (!files.length) throw new Error("CSVファイルを選択してください。");
+    state.rawRows = [];
+    state.sourceNames = [];
+    state.loadedCsvPaths = [];
+    for (const file of files) {
+      const text = await file.text();
+      const rows = parseCSV(text);
+      loadRows(rows, file.name);
+      state.loadedCsvPaths.push(file.name);
+    }
+    buildReport();
+    status(`${files.length}ファイル、${state.rawRows.length.toLocaleString("ja-JP")}行を読み込みました。`);
+  }
+
+  function toCSV(rows) {
+    const headers = columns.map(c => c[1]);
+    const keys = columns.map(c => c[0]);
+    const data = [headers].concat(rows.map(r => keys.map(k => {
+      const v = r[k];
+      if (k.endsWith("Pct")) return num(v) * 100;
+      return v;
+    })));
+    return data.map(row => row.map(v => `"${String(v ?? "").replace(/"/g, '""')}"`).join(",")).join("\r\n");
+  }
+
+  function downloadSummary() {
+    const csv = toCSV(filteredRows());
+    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "rugby_player_summary.csv";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(a.href);
+  }
+
+  function clearReportOnly() {
+    state.reportRows = [];
+    el("summary").innerHTML = "";
+    el("matchList").innerHTML = "";
+    el("fileList").innerHTML = "";
+    el("teamFilter").innerHTML = `<option value="">全チーム</option>`;
+    el("tableWrap").innerHTML = `<div class="empty">DropboxフォルダまたはローカルCSVを読み込むと、ここに選手別集計が表示されます。</div>`;
+    el("downloadSummary").disabled = true;
+  }
+
+  function clearData() {
+    state.rawRows = [];
+    state.sourceNames = [];
+    state.loadedCsvPaths = [];
+    clearReportOnly();
+    status("クリアしました。");
+  }
+
+  function attachEvents() {
+    el("saveDropboxSettings").addEventListener("click", saveDropboxSettings);
+    el("connectDropbox").addEventListener("click", () => connectDropbox().catch(e => status(`エラー: ${e.message}`)));
+    el("loadDropboxFolder").addEventListener("click", () => loadDropboxFolder().catch(e => status(`エラー: ${e.message}`)));
+    el("disconnectDropbox").addEventListener("click", disconnectDropbox);
+    el("loadLocal").addEventListener("click", () => readFiles(el("csvFiles").files).catch(e => status(`エラー: ${e.message}`)));
+    el("clearData").addEventListener("click", clearData);
+    el("filterText").addEventListener("input", renderTable);
+    el("teamFilter").addEventListener("change", renderTable);
+    el("downloadSummary").addEventListener("click", downloadSummary);
+    el("successResults").addEventListener("change", () => state.rawRows.length && buildReport());
+    el("dedupeRows").addEventListener("change", () => state.rawRows.length && buildReport());
+    el("includeMissedAction").addEventListener("change", () => state.rawRows.length && buildReport());
+  }
+
+  async function init() {
+    loadDropboxSettings();
+    attachEvents();
+    try {
+      const didAuth = await handleOAuthCallback();
+      updateAuthState(didAuth ? "Dropbox認証が完了しました。" : "");
+      if ((didAuth || tokenIsValid()) && el("autoLoadDropbox").checked) {
+        await loadDropboxFolder();
+      }
+    } catch (e) {
+      updateAuthState();
+      status(`エラー: ${e.message}`);
+    }
+  }
+
+  init();
+})();
+</script>
+</body>
+</html>
