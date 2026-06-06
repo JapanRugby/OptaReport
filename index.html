@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Rugby Dropbox CSV Player Report v7</title>
+  <title>Rugby Dropbox CSV Player Report</title>
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
   <style>
     :root {
@@ -229,7 +229,7 @@
           </ol>
           <input id="redirectUri" type="text" readonly>
           <p class="hint"><code>file://</code> で直接開くとOAuthリダイレクトに使えない場合があります。GitHub PagesなどのHTTPS、またはローカルHTTPサーバーで開いてください。</p>
-          <p class="hint">v7: Tackle関連指標を Opta の Tackle Order / Qualifier5 に基づき、初期設定で 1st Tackler のみに限定しました。</p>
+          <p class="hint">index版: Tackle関連指標は1st Tackler限定。表示形式は Total / Per 80mins / Per Game から選択できます。</p>
         </details>
 
         <div id="dropboxStatus" class="status"></div>
@@ -237,6 +237,13 @@
 
       <div class="card span-4">
         <h2>集計設定</h2>
+        <label>スタッツ表示形式</label>
+        <select id="statMode">
+          <option value="total" selected>Total</option>
+          <option value="per80">Per 80mins</option>
+          <option value="perGame">Per Game</option>
+        </select>
+        <p class="hint">Totalは合計値、Per 80minsは Playing Minutes を分母に80分換算、Per Gameは試合数を分母に1試合換算で表示します。%系指標は換算せず、そのまま割合で表示します。</p>
         <label>Tackle Completion%の分子に含める ActionResultName</label>
         <input id="successResults" type="text" value="Complete, Passive, Offload Allowed, Turnover Won, Forced in Touch, Pen Conceded, Try Saver, Sack, Ineffective">
         <label>Tackle関連指標の対象</label>
@@ -359,6 +366,7 @@
     autoLoad: "rugbyDropboxAutoLoad",
     loadMode: "rugbyDropboxLoadMode",
     concurrency: "rugbyDropboxConcurrency",
+    statMode: "rugbyStatDisplayMode",
     token: "rugbyDropboxAccessToken",
     expiresAt: "rugbyDropboxExpiresAt"
   };
@@ -411,6 +419,7 @@
     localStorage.setItem(STORAGE.autoLoad, el("autoLoadDropbox").checked ? "1" : "0");
     localStorage.setItem(STORAGE.loadMode, el("dropboxLoadMode").value);
     localStorage.setItem(STORAGE.concurrency, clean(el("concurrentDownloads").value) || "6");
+    localStorage.setItem(STORAGE.statMode, el("statMode").value || "total");
     updateAuthState("Dropbox設定を保存しました。");
   }
 
@@ -421,6 +430,7 @@
     el("autoLoadDropbox").checked = (localStorage.getItem(STORAGE.autoLoad) ?? "1") === "1";
     el("dropboxLoadMode").value = localStorage.getItem(STORAGE.loadMode) || "cache";
     el("concurrentDownloads").value = localStorage.getItem(STORAGE.concurrency) || "6";
+    el("statMode").value = localStorage.getItem(STORAGE.statMode) || "total";
     el("redirectUri").value = redirectUri();
   }
 
@@ -1528,28 +1538,115 @@
     el("downloadSummary").disabled = state.reportRows.length === 0;
   }
 
+  function statMode() {
+    const node = el("statMode");
+    return node ? node.value : "total";
+  }
+
+  function modeSuffix() {
+    const mode = statMode();
+    if (mode === "per80") return " / 80mins";
+    if (mode === "perGame") return " / Game";
+    return "";
+  }
+
+  const scalableKeys = new Set([
+    "tackleAttempts",
+    "carryAttempts",
+    "postContactMetres",
+    "attackRuckOOAArrivals",
+    "jackalAttempts"
+  ]);
+
+  const pctKeys = new Set([
+    "tackleCompletionPct",
+    "tackleSuccessPct",
+    "tackleDominancePct",
+    "dominantTacklePct",
+    "carryDominancePct",
+    "gainlinePct",
+    "attackRuckOOAEffectivenessPct",
+    "jackalEffectivenessPct"
+  ]);
+
+  function scaledMetric(value, row) {
+    const mode = statMode();
+    const v = num(value);
+    if (mode === "per80") {
+      const minutes = num(row.playingMinutes);
+      return minutes ? v * 80 / minutes : 0;
+    }
+    if (mode === "perGame") {
+      const games = num(row.matchCount);
+      return games ? v / games : 0;
+    }
+    return v;
+  }
+
+  function displayValue(row, key) {
+    if (pctKeys.has(key)) return num(row[key]);
+    if (key === "playingMinutes") {
+      if (statMode() === "perGame") {
+        const games = num(row.matchCount);
+        return games ? num(row.playingMinutes) / games : 0;
+      }
+      return num(row.playingMinutes);
+    }
+    if (scalableKeys.has(key)) return scaledMetric(row[key], row);
+    return row[key];
+  }
+
+  function displayType(key, type) {
+    if (pctKeys.has(key)) return type;
+    if (statMode() !== "total" && (scalableKeys.has(key) || key === "playingMinutes")) return "num1";
+    return type;
+  }
+
+  function displayLabel(key, label) {
+    const mode = statMode();
+    if (mode === "perGame" && key === "playingMinutes") return "Playing Minutes / Game";
+    if (scalableKeys.has(key)) return `${label}${modeSuffix()}`;
+    return label;
+  }
+
+  function summaryScaled(value, totalMinutes, matchCount) {
+    const mode = statMode();
+    const v = num(value);
+    if (mode === "per80") return totalMinutes ? v * 80 / totalMinutes : 0;
+    if (mode === "perGame") return matchCount ? v / matchCount : 0;
+    return v;
+  }
+
   function renderSummary(rowCountOrRows, matches, teams) {
     const rowCount = Array.isArray(rowCountOrRows) ? rowCountOrRows.length : Number(rowCountOrRows || 0);
+    const matchCount = matches.size || 0;
     const playingMinutes = state.reportRows.reduce((s, p) => s + num(p.playingMinutes), 0);
     const carryAttempts = state.reportRows.reduce((s, p) => s + num(p.carryAttempts), 0);
+    const carryDominant = state.reportRows.reduce((s, p) => s + num(p.carryDominant || p.carryDominantContact), 0);
     const tAtt = state.reportRows.reduce((s, p) => s + num(p.tackleAttempts), 0);
     const tSucc = state.reportRows.reduce((s, p) => s + num(p.tackleSuccess), 0);
+    const tDom = state.reportRows.reduce((s, p) => s + num(p.tackleDominant), 0);
     const pcm = state.reportRows.reduce((s, p) => s + num(p.postContactMetres), 0);
     const ooa = state.reportRows.reduce((s, p) => s + num(p.attackRuckOOAArrivals), 0);
     const ooaSucc = state.reportRows.reduce((s, p) => s + num(p.attackRuckOOASuccess), 0);
     const jackal = state.reportRows.reduce((s, p) => s + num(p.jackalAttempts), 0);
     const jackalSucc = state.reportRows.reduce((s, p) => s + num(p.jackalSuccess), 0);
+    const suffix = modeSuffix();
+    const playingMinutesLabel = statMode() === "perGame" ? "Playing Minutes / Game" : "Playing Minutes";
+    const playingMinutesValue = statMode() === "perGame" && matchCount ? playingMinutes / matchCount : playingMinutes;
     el("summary").innerHTML = [
-      [matches.size, "試合数"],
+      [matchCount, "試合数"],
       [teams.size, "チーム数"],
-      [fmt(playingMinutes, 1), "Playing Minutes"],
-      [tAtt, "1st Tackle Attempt"],
+      [fmt(playingMinutesValue, 1), playingMinutesLabel],
+      [fmt(summaryScaled(tAtt, playingMinutes, matchCount), statMode() === "total" ? 0 : 1), `1st Tackle Attempt${suffix}`],
       [pct(tSucc, tAtt), "1st Tackle Completion%"],
-      [carryAttempts, "Carry Attempt"],
-      [fmt(pcm, 0), "Post Contact Metres"],
-      [ooa, "Attack Ruck OOA Arrivals"],
+      [pct(tDom, tAtt), "1st Tackle Dominance%"],
+      [fmt(summaryScaled(carryAttempts, playingMinutes, matchCount), statMode() === "total" ? 0 : 1), `Carry Attempt${suffix}`],
+      [pct(carryDominant, carryAttempts), "Carry Dominance%"],
+      [fmt(summaryScaled(pcm, playingMinutes, matchCount), statMode() === "total" ? 0 : 1), `Post Contact Metres${suffix}`],
+      [fmt(summaryScaled(ooa, playingMinutes, matchCount), statMode() === "total" ? 0 : 1), `Attack Ruck OOA Arrivals${suffix}`],
       [pct(ooaSucc, ooa), "Attack Ruck OOA Effectiveness%"],
-      [jackal, "Jackal Attempt"],
+      [fmt(summaryScaled(jackal, playingMinutes, matchCount), statMode() === "total" ? 0 : 1), `Jackal Attempt${suffix}`],
       [pct(jackalSucc, jackal), "Jackal Effectiveness%"],
       [state.reportRows.length, "選手数"]
     ].map(([n, label]) => `<div class="box"><div class="num">${n}</div><div class="label">${label}</div></div>`).join("");
@@ -1592,7 +1689,7 @@
   }
 
   function compare(a, b, key) {
-    const av = a[key], bv = b[key];
+    const av = displayValue(a, key), bv = displayValue(b, key);
     if (typeof av === "number" || typeof bv === "number") return (num(av) - num(bv));
     return clean(av).localeCompare(clean(bv), "ja");
   }
@@ -1607,10 +1704,11 @@
       return;
     }
     const head = `<thead><tr>${columns.map(([key, label, type]) => {
+      const shownType = displayType(key, type);
       const arrow = state.sortKey === key ? (state.sortDir === "asc" ? " ▲" : " ▼") : "";
-      return `<th data-key="${key}" class="${type.startsWith("num") ? "num" : ""}">${label}${arrow}</th>`;
+      return `<th data-key="${key}" class="${shownType.startsWith("num") ? "num" : ""}">${displayLabel(key, label)}${arrow}</th>`;
     }).join("")}</tr></thead>`;
-    const body = `<tbody>${rows.map(r => `<tr>${columns.map(([key, label, type]) => cell(r[key], type)).join("")}</tr>`).join("")}</tbody>`;
+    const body = `<tbody>${rows.map(r => `<tr>${columns.map(([key, label, type]) => cell(displayValue(r, key), displayType(key, type))).join("")}</tr>`).join("")}</tbody>`;
     el("tableWrap").innerHTML = `<table>${head}${body}</table>`;
     el("tableWrap").querySelectorAll("th").forEach(th => {
       th.addEventListener("click", () => {
@@ -1649,10 +1747,10 @@
   }
 
   function toCSV(rows) {
-    const headers = columns.map(c => c[1]);
+    const headers = columns.map(([key, label]) => displayLabel(key, label));
     const keys = columns.map(c => c[0]);
     const data = [headers].concat(rows.map(r => keys.map(k => {
-      const v = r[k];
+      const v = displayValue(r, k);
       if (k.endsWith("Pct")) return num(v) * 100;
       return v;
     })));
@@ -1735,6 +1833,10 @@
     });
     el("resetFilters").addEventListener("click", resetFilters);
     el("downloadSummary").addEventListener("click", downloadSummary);
+    el("statMode").addEventListener("change", () => {
+      localStorage.setItem(STORAGE.statMode, el("statMode").value || "total");
+      rebuildReportWithCurrentData();
+    });
     ["successResults", "tackleOrderFilter", "postContactMetresColumn", "attackRuckOOASuccessTypes", "jackalSuccessTypes"].forEach(id => {
       el(id).addEventListener("change", rebuildCurrentReportAfterSettingChange);
     });
